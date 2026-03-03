@@ -59,6 +59,9 @@ async function handleSumsubWebhook(payload) {
   return { ok: true, ...result };
 }
 
+/**
+ * Webhook receiver (POC)
+ */
 app.post("/api/webhook/sumsub", async (req, res) => {
   try {
     const out = await handleSumsubWebhook(req.body);
@@ -69,6 +72,9 @@ app.post("/api/webhook/sumsub", async (req, res) => {
   }
 });
 
+/**
+ * Demo trigger (POC)
+ */
 app.post("/api/demo/trigger", async (req, res) => {
   try {
     const sample = {
@@ -86,44 +92,13 @@ app.post("/api/demo/trigger", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+/**
+ * Applications API (Day-1)
+ */
 app.post("/api/applications", async (req, res) => {
   try {
-    const { fullName, email } = req.body;
-    if (!fullName || !email) {
-      return res.status(400).json({ ok: false, error: "fullName and email are required" });
-    }
-
-    const out = await pool.query(
-      "INSERT INTO applications (full_name, email) VALUES ($1,$2) RETURNING *",
-      [fullName, email]
-    );
-
-    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
-      "APPLICATION_CREATED",
-      out.rows[0]
-    ]);
-
-    res.json({ ok: true, application: out.rows[0] });
-  } catch (e) {
-    console.error("Create application error:", e);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.get("/api/applications", async (req, res) => {
-  try {
-    const apps = await pool.query(
-      "SELECT * FROM applications ORDER BY created_at DESC LIMIT 50"
-    );
-    res.json({ ok: true, applications: apps.rows });
-  } catch (e) {
-    console.error("List applications error:", e);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-app.post("/api/applications", async (req, res) => {
-  try {
-    const { fullName, email } = req.body;
+    const { fullName, email } = req.body || {};
     if (!fullName || !email) {
       return res.status(400).json({ ok: false, error: "fullName and email are required" });
     }
@@ -154,6 +129,10 @@ app.get("/api/applications", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+/**
+ * Dashboard APIs
+ */
 app.get("/api/summary", async (req, res) => {
   const customers = await pool.query("SELECT * FROM customers ORDER BY created_at DESC LIMIT 10");
   const audits = await pool.query("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 10");
@@ -175,10 +154,9 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
   const contractRes = await pool.query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
   if (!contractRes.rows[0]) return res.status(404).send("Not found");
 
-  const customerRes = await pool.query(
-    "SELECT * FROM customers WHERE id=$1",
-    [contractRes.rows[0].customer_id]
-  );
+  const customerRes = await pool.query("SELECT * FROM customers WHERE id=$1", [
+    contractRes.rows[0].customer_id
+  ]);
 
   const pdf = generateContractPDF({
     customer: customerRes.rows[0],
@@ -196,7 +174,10 @@ app.get("/api/audit/export", async (req, res) => {
   res.setHeader("Content-Disposition", "attachment; filename=audit_export.csv");
   res.send(csv);
 });
-// ...rest unchanged
+
+/**
+ * Serve SPA
+ */
 const clientDist = path.join(__dirname, "..", "client", "dist");
 app.use(express.static(clientDist));
 app.get(/^\/(?!api\/).*/, (req, res) => {

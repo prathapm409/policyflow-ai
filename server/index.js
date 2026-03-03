@@ -121,6 +121,39 @@ app.get("/api/applications", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+app.post("/api/applications", async (req, res) => {
+  try {
+    const { fullName, email } = req.body;
+    if (!fullName || !email) {
+      return res.status(400).json({ ok: false, error: "fullName and email are required" });
+    }
+
+    const out = await pool.query(
+      "INSERT INTO applications (full_name, email) VALUES ($1,$2) RETURNING *",
+      [fullName, email]
+    );
+
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "APPLICATION_CREATED",
+      out.rows[0]
+    ]);
+
+    res.json({ ok: true, application: out.rows[0] });
+  } catch (e) {
+    console.error("Create application error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get("/api/applications", async (req, res) => {
+  try {
+    const apps = await pool.query("SELECT * FROM applications ORDER BY created_at DESC LIMIT 50");
+    res.json({ ok: true, applications: apps.rows });
+  } catch (e) {
+    console.error("List applications error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 app.get("/api/summary", async (req, res) => {
   const customers = await pool.query("SELECT * FROM customers ORDER BY created_at DESC LIMIT 10");
   const audits = await pool.query("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 10");

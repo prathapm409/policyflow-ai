@@ -86,11 +86,52 @@ app.post("/api/demo/trigger", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+app.get("/api/summary", async (req, res) => {
+  const customers = await pool.query("SELECT * FROM customers ORDER BY created_at DESC LIMIT 10");
+  const audits = await pool.query("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 10");
+  const counts = await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM customers) AS customers,
+      (SELECT COUNT(*) FROM contracts) AS contracts,
+      (SELECT COUNT(*) FROM audit_logs) AS audits
+  `);
 
+  res.json({
+    counts: counts.rows[0],
+    customers: customers.rows,
+    audits: audits.rows
+  });
+});
+
+app.get("/api/contracts/:id/pdf", async (req, res) => {
+  const contractRes = await pool.query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
+  if (!contractRes.rows[0]) return res.status(404).send("Not found");
+
+  const customerRes = await pool.query(
+    "SELECT * FROM customers WHERE id=$1",
+    [contractRes.rows[0].customer_id]
+  );
+
+  const pdf = generateContractPDF({
+    customer: customerRes.rows[0],
+    contract: contractRes.rows[0]
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.send(pdf);
+});
+
+app.get("/api/audit/export", async (req, res) => {
+  const logs = await pool.query("SELECT * FROM audit_logs ORDER BY created_at DESC");
+  const csv = stringify(logs.rows, { header: true });
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", "attachment; filename=audit_export.csv");
+  res.send(csv);
+});
 // ...rest unchanged
 const clientDist = path.join(__dirname, "..", "client", "dist");
 app.use(express.static(clientDist));
-app.get("*", (req, res) => {
+app.get(/^\/(?!api\/).*/, (req, res) => {
   res.sendFile(path.join(clientDist, "index.html"));
 });
 

@@ -141,9 +141,11 @@ export default function App() {
             <th>Full Name</th>
             <th>Email</th>
             <th>KYC Status</th>
+            <th>Risk Tier</th>
+            <th>Monitoring</th>
             <th>Applicant ID</th>
             <th>Action</th>
-            <th>Created</th>            
+            <th>Created</th>
           </tr>
         </thead>
         <tbody>
@@ -153,28 +155,32 @@ export default function App() {
               <td>{a.full_name}</td>
               <td>{a.email}</td>
               <td>{a.kyc_status}</td>
-              <td style={{ fontFamily: "monospace" }}>{a.external_applicant_id || "-"}</td>
+              <td>{a.risk_tier || "-"}</td>
+              <td>{a.monitoring_frequency || "-"}</td>
+              <td style={{ fontFamily: "monospace" }}>
+                {a.external_applicant_id || "-"}
+              </td>
               <td>
-              {a.kyc_status === "PENDING_KYC" ? (
-              <button
-               onClick={async () => {
-              await startKyc(a.id);
-              await loadApplications();
-              }}
-              >
-              Start KYC
-             </button>
-             ) : (
-             "-"
-             )}
-             </td>
-             <td>{new Date(a.created_at).toLocaleString()}</td>
-              
+                {a.kyc_status === "PENDING_KYC" ? (
+                  <button
+                    onClick={async () => {
+                      await startKyc(a.id);
+                      await loadApplications();
+                    }}
+                  >
+                    Start KYC
+                  </button>
+                ) : (
+                  "-"
+                )}
+              </td>
+              <td>{new Date(a.created_at).toLocaleString()}</td>
             </tr>
           ))}
+
           {apps.length === 0 ? (
             <tr>
-              <td colSpan="7" style={{ textAlign: "center", padding: 12 }}>
+              <td colSpan="9" style={{ textAlign: "center", padding: 12 }}>
                 No applications yet
               </td>
             </tr>

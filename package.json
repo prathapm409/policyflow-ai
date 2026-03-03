@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "concurrently \"nodemon server/index.js\" \"npm --prefix client run dev\"",
     "start": "node server/index.js",
-    "build": "npm --prefix client install && npm --prefix client run build",
+    "build": "npm --prefix client ci --include=dev && npm --prefix client run build",
     "db:init": "node server/init-db.js"
   },
   "dependencies": {

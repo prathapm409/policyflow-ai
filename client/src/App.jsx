@@ -45,6 +45,17 @@ export default function App() {
     await loadApplications();
   }
 
+  async function onCopy(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      // keep it simple: no toast lib, just alert
+      alert("Copied Applicant ID!");
+    } catch (e) {
+      console.error(e);
+      alert("Copy failed. Please copy manually.");
+    }
+  }
+
   if (!summary) return <div className="container">Loading...</div>;
 
   return (
@@ -149,34 +160,58 @@ export default function App() {
           </tr>
         </thead>
         <tbody>
-          {apps.map((a) => (
-            <tr key={a.id}>
-              <td>{a.id}</td>
-              <td>{a.full_name}</td>
-              <td>{a.email}</td>
-              <td>{a.kyc_status}</td>
-              <td>{a.risk_tier || "-"}</td>
-              <td>{a.monitoring_frequency || "-"}</td>
-              <td style={{ fontFamily: "monospace" }}>
-                {a.external_applicant_id || "-"}
-              </td>
-              <td>
-                {a.kyc_status === "PENDING_KYC" ? (
-                  <button
-                    onClick={async () => {
-                      await startKyc(a.id);
-                      await loadApplications();
+          {apps.map((a) => {
+            const applicantId = a.external_applicant_id || "";
+            const hasApplicantId = Boolean(applicantId);
+
+            return (
+              <tr key={a.id}>
+                <td>{a.id}</td>
+                <td>{a.full_name}</td>
+                <td>{a.email}</td>
+                <td>{a.kyc_status}</td>
+                <td>{a.risk_tier || "-"}</td>
+                <td>{a.monitoring_frequency || "-"}</td>
+                <td style={{ fontFamily: "monospace" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      flexWrap: "wrap",
                     }}
                   >
-                    Start KYC
-                  </button>
-                ) : (
-                  "-"
-                )}
-              </td>
-              <td>{new Date(a.created_at).toLocaleString()}</td>
-            </tr>
-          ))}
+                    <span>{hasApplicantId ? applicantId : "-"}</span>
+                    {hasApplicantId ? (
+                      <button
+                        type="button"
+                        onClick={() => onCopy(applicantId)}
+                        style={{ padding: "6px 10px" }}
+                      >
+                        Copy
+                      </button>
+                    ) : null}
+                  </div>
+                </td>
+                <td>
+                  {a.kyc_status === "PENDING_KYC" ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await startKyc(a.id);
+                        await loadApplications();
+                      }}
+                    >
+                      Start KYC
+                    </button>
+                  ) : (
+                    "-"
+                  )}
+                </td>
+                <td>{new Date(a.created_at).toLocaleString()}</td>
+              </tr>
+            );
+          })}
 
           {apps.length === 0 ? (
             <tr>

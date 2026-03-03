@@ -26,6 +26,14 @@ async function handleSumsubWebhook(payload) {
   ]);
 
   if (status !== "approved") {
+    // If this webhook belongs to an application created via Start KYC, update its status
+    await pool.query(
+      `UPDATE applications
+       SET kyc_status=$1, updated_at=NOW()
+       WHERE external_applicant_id=$2`,
+      [String(status || "UNKNOWN").toUpperCase(), applicantId]
+    );
+
     return { ok: true, message: "No automation for non-approved status." };
   }
 
@@ -50,6 +58,18 @@ async function handleSumsubWebhook(payload) {
   ]);
 
   const result = { customer, contract: contractRes.rows[0], monitoring };
+  // Update matching application (if created via Start KYC)
+  await pool.query(
+    `UPDATE applications
+     SET kyc_status='APPROVED',
+         risk_tier=$1,
+         monitoring_frequency=$2,
+         customer_id=$3,
+         contract_id=$4,
+         updated_at=NOW()
+     WHERE external_applicant_id=$5`,
+    [riskTier, monitoring, customer.id, contractRes.rows[0].id, applicantId]
+  );
 
   await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
     "AUTOMATION_EXECUTED",
@@ -129,7 +149,37 @@ app.get("/api/applications", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+app.post("/api/applications/:id/start-kyc", async (req, res) => {
+  try {
+    const id = req.params.id;
 
+    const appRes = await pool.query("SELECT * FROM applications WHERE id=$1", [id]);
+    if (!appRes.rows[0]) return res.status(404).json({ ok: false, error: "Application not found" });
+
+    // Simulated Sumsub applicant id (later we will replace with real Sumsub applicant creation)
+    const externalApplicantId = `SUMSUB-${uuid().slice(0, 10)}`;
+
+    const updated = await pool.query(
+      `UPDATE applications
+       SET external_applicant_id=$1,
+           kyc_status='IN_PROGRESS',
+           updated_at=NOW()
+       WHERE id=$2
+       RETURNING *`,
+      [externalApplicantId, id]
+    );
+
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "KYC_STARTED",
+      updated.rows[0]
+    ]);
+
+    res.json({ ok: true, application: updated.rows[0] });
+  } catch (e) {
+    console.error("Start KYC error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 /**
  * Dashboard APIs
  */

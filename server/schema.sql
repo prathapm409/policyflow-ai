@@ -36,3 +36,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   payload JSONB,
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS applications (
+  id SERIAL PRIMARY KEY,
+  full_name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  kyc_status TEXT NOT NULL DEFAULT 'PENDING_KYC',
+  created_at TIMESTAMP DEFAULT NOW()
+);

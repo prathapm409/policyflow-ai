@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { getSummary, triggerDemo, createApplication, listApplications } from "./api";
+import {
+  getSummary,
+  triggerDemo,
+  createApplication,
+  listApplications,
+  startKyc,
+} from "./api";
 
 export default function App() {
   const [summary, setSummary] = useState(null);
@@ -135,7 +141,9 @@ export default function App() {
             <th>Full Name</th>
             <th>Email</th>
             <th>KYC Status</th>
-            <th>Created</th>
+            <th>Applicant ID</th>
+            <th>Action</th>
+            <th>Created</th>            
           </tr>
         </thead>
         <tbody>
@@ -145,12 +153,28 @@ export default function App() {
               <td>{a.full_name}</td>
               <td>{a.email}</td>
               <td>{a.kyc_status}</td>
-              <td>{new Date(a.created_at).toLocaleString()}</td>
+              <td style={{ fontFamily: "monospace" }}>{a.external_applicant_id || "-"}</td>
+              <td>
+              {a.kyc_status === "PENDING_KYC" ? (
+              <button
+               onClick={async () => {
+              await startKyc(a.id);
+              await loadApplications();
+              }}
+              >
+              Start KYC
+             </button>
+             ) : (
+             "-"
+             )}
+             </td>
+             <td>{new Date(a.created_at).toLocaleString()}</td>
+              
             </tr>
           ))}
           {apps.length === 0 ? (
             <tr>
-              <td colSpan="5" style={{ textAlign: "center", padding: 12 }}>
+              <td colSpan="7" style={{ textAlign: "center", padding: 12 }}>
                 No applications yet
               </td>
             </tr>

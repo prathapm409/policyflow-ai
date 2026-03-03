@@ -21,3 +21,10 @@ export async function listApplications() {
   const res = await fetch("/api/applications");
   return res.json();
 }
+
+export async function startKyc(applicationId) {
+  const res = await fetch(`/api/applications/${applicationId}/start-kyc`, {
+    method: "POST",
+  });
+  return res.json();
+}

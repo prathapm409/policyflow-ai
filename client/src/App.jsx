@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getSummary,
   triggerDemo,
@@ -8,6 +8,46 @@ import {
   sendSumsubWebhook,
 } from "./api";
 
+function Toast({ toast, onClose }) {
+  if (!toast) return null;
+  const bg =
+    toast.type === "error" ? "#dc2626" : toast.type === "success" ? "#16a34a" : "#2563eb";
+  return (
+    <div
+      style={{
+        position: "fixed",
+        right: 16,
+        bottom: 16,
+        background: bg,
+        color: "white",
+        padding: "10px 12px",
+        borderRadius: 10,
+        boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
+        maxWidth: 360,
+        zIndex: 9999,
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+      }}
+    >
+      <div style={{ fontSize: 14, lineHeight: 1.3 }}>{toast.message}</div>
+      <button
+        onClick={onClose}
+        style={{
+          border: "1px solid rgba(255,255,255,0.35)",
+          background: "transparent",
+          color: "white",
+          borderRadius: 8,
+          padding: "4px 8px",
+          cursor: "pointer",
+        }}
+      >
+        Close
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const [summary, setSummary] = useState(null);
 
@@ -15,6 +55,15 @@ export default function App() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [appError, setAppError] = useState("");
+
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  function showToast(message, type = "info") {
+    setToast({ message, type });
+    window.clearTimeout(showToast._t);
+    showToast._t = window.setTimeout(() => setToast(null), 2500);
+  }
 
   async function load() {
     const data = await getSummary();
@@ -35,24 +84,36 @@ export default function App() {
     e.preventDefault();
     setAppError("");
 
-    const res = await createApplication({ fullName, email });
-    if (!res.ok) {
-      setAppError(res.error || "Failed to create application");
+    if (!fullName.trim() || !email.trim()) {
+      setAppError("Full name and email are required");
       return;
     }
 
-    setFullName("");
-    setEmail("");
-    await loadApplications();
+    setBusy(true);
+    try {
+      const res = await createApplication({ fullName, email });
+      if (!res.ok) {
+        setAppError(res.error || "Failed to create application");
+        showToast(res.error || "Failed to create application", "error");
+        return;
+      }
+
+      setFullName("");
+      setEmail("");
+      await loadApplications();
+      showToast("Application created", "success");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onCopy(text) {
     try {
       await navigator.clipboard.writeText(text);
-      alert("Copied Applicant ID!");
+      showToast("Copied Applicant ID", "success");
     } catch (e) {
       console.error(e);
-      alert("Copy failed. Please copy manually.");
+      showToast("Copy failed. Please copy manually.", "error");
     }
   }
 
@@ -87,23 +148,21 @@ export default function App() {
             overflow: "hidden",
           }}
         >
-          <div
-            style={{
-              width: `${pct}%`,
-              height: 8,
-              background: color,
-            }}
-          />
+          <div style={{ width: `${pct}%`, height: 8, background: color }} />
         </div>
         <div style={{ fontSize: 12, marginTop: 4 }}>{pct}%</div>
       </div>
     );
   }
 
+  const appCount = useMemo(() => apps.length, [apps.length]);
+
   if (!summary) return <div className="container">Loading...</div>;
 
   return (
     <div className="container">
+      <Toast toast={toast} onClose={() => setToast(null)} />
+
       <h1>PolicyFlow AI Dashboard</h1>
 
       <div className="cards">
@@ -112,15 +171,32 @@ export default function App() {
         <div className="card">Audit Logs: {summary.counts.audits}</div>
       </div>
 
-      <button
-        onClick={async () => {
-          await triggerDemo();
-          await load();
-          await loadApplications();
-        }}
-      >
-        Simulate Sumsub Approved
-      </button>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <button
+          disabled={busy}
+          onClick={async () => {
+            if (busy) return;
+            setBusy(true);
+            try {
+              await triggerDemo();
+              await load();
+              await loadApplications();
+              showToast("Demo automation executed", "success");
+            } catch (e) {
+              console.error(e);
+              showToast("Demo failed", "error");
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Working..." : "Simulate Sumsub Approved"}
+        </button>
+
+        <div style={{ color: "#6b7280", fontSize: 13 }}>
+          Applications: <b>{appCount}</b>
+        </div>
+      </div>
 
       <h2>Latest Customers</h2>
       <table>
@@ -182,7 +258,9 @@ export default function App() {
             onChange={(e) => setEmail(e.target.value)}
             style={{ padding: 10, minWidth: 240 }}
           />
-          <button type="submit">Create Application</button>
+          <button disabled={busy} type="submit">
+            {busy ? "Creating..." : "Create Application"}
+          </button>
         </div>
         {appError ? (
           <div style={{ color: "crimson", marginTop: 8 }}>{appError}</div>
@@ -204,6 +282,7 @@ export default function App() {
             <th>Created</th>
           </tr>
         </thead>
+
         <tbody>
           {apps.map((a) => {
             const applicantId = a.external_applicant_id || "";
@@ -220,17 +299,11 @@ export default function App() {
                 <td>{a.monitoring_frequency || "-"}</td>
 
                 <td style={{ fontFamily: "monospace" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      flexWrap: "wrap",
-                    }}
-                  >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span>{hasApplicantId ? applicantId : "-"}</span>
                     {hasApplicantId ? (
                       <button
+                        disabled={busy}
                         type="button"
                         onClick={() => onCopy(applicantId)}
                         style={{ padding: "6px 10px" }}
@@ -245,38 +318,58 @@ export default function App() {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {a.kyc_status === "PENDING_KYC" ? (
                       <button
+                        disabled={busy}
                         type="button"
                         onClick={async () => {
-                          await startKyc(a.id);
-                          await loadApplications();
-                          await load();
+                          if (busy) return;
+                          setBusy(true);
+                          try {
+                            await startKyc(a.id);
+                            await loadApplications();
+                            await load();
+                            showToast("KYC started", "success");
+                          } catch (e) {
+                            console.error(e);
+                            showToast("Start KYC failed", "error");
+                          } finally {
+                            setBusy(false);
+                          }
                         }}
                       >
                         Start KYC
                       </button>
                     ) : null}
 
-                    {hasApplicantId ? (
+                    {hasApplicantId && a.kyc_status !== "APPROVED" ? (
                       <button
+                        disabled={busy}
                         type="button"
                         onClick={async () => {
-                          await sendSumsubWebhook({
-                            applicantId,
-                            status: "approved",
-                            fullName: a.full_name,
-                            email: a.email,
-                            pep: false,
-                            amlScore: 42,
-                          });
-                          await loadApplications();
-                          await load();
+                          if (busy) return;
+                          setBusy(true);
+                          try {
+                            await sendSumsubWebhook({
+                              applicantId,
+                              status: "approved",
+                              fullName: a.full_name,
+                              email: a.email,
+                              pep: false,
+                              amlScore: 42,
+                            });
+                            await loadApplications();
+                            await load();
+                            showToast("Webhook: approved processed", "success");
+                          } catch (e) {
+                            console.error(e);
+                            showToast("Simulate approved failed", "error");
+                          } finally {
+                            setBusy(false);
+                          }
                         }}
                       >
                         Simulate Approved
                       </button>
                     ) : null}
-
-                    {!hasApplicantId && a.kyc_status !== "PENDING_KYC" ? "-" : null}
                   </div>
                 </td>
 

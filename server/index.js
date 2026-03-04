@@ -1,11 +1,13 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const axios = require("axios");
 const { v4: uuid } = require("uuid");
 const { stringify } = require("csv-stringify/sync");
 const pool = require("./db");
 const { assignRiskTier, monitoringFrequency } = require("./rules");
 const { generateContractPDF } = require("./pdf");
+const { requireEnv, signSumsubRequest } = require("./sumsub");
 const path = require("path");
 
 const app = express();
@@ -140,39 +142,26 @@ app.post("/api/webhook/sumsub", async (req, res) => {
 
 /**
  * REAL webhook receiver (Sumsub sends type like applicantReviewed etc.)
- * For now: accept and map to our internal format.
- */
+ 
+*/
 app.post("/api/webhook/sumsub/real", async (req, res) => {
   try {
     const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
     if (!raw) return res.status(400).json({ ok: false, error: "Empty body" });
 
-    const signatureHeader =
-      req.headers["x-payload-digest"] ||
-      req.headers["x-signature"] ||
-      req.headers["x-sumsub-signature"] ||
-      req.headers["x-webhook-signature"];
 
-    // Log signature presence (we will enforce after confirming header name)
-    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
-      "WEBHOOK_SIGNATURE_CHECK",
-      {
-        signaturePresent: Boolean(signatureHeader),
-        headerKeys: Object.keys(req.headers || {}).slice(0, 30),
-      },
-    ]);
 
     const payload = JSON.parse(raw);
 
-    // Sumsub payload example in your console shows:
-    // { applicantId, type: "applicantReviewed", reviewResult: { reviewAnswer: "GREEN" | "RED" }, ... }
+  
     const applicantId = payload.applicantId || payload.applicant?.id || payload.applicant?.applicantId;
     const type = payload.type || payload.eventType || payload.webhookType;
 
     const reviewAnswer = payload.reviewResult?.reviewAnswer || payload.reviewResult?.reviewStatus;
     const isGreen = String(reviewAnswer || "").toUpperCase() === "GREEN";
-    const isRed = String(reviewAnswer || "").toUpperCase() === "RED";
-
+ 
+ 
+   const isRed = String(reviewAnswer || "").toUpperCase() === "RED";
     const status = isGreen ? "approved" : isRed ? "rejected" : "pending";
 
     const internalPayload = {
@@ -192,6 +181,119 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
   } catch (e) {
     console.error("Real webhook error:", e);
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * Step 7B: Create Sumsub applicant (levelName=id-and-liveness)
+ */
+app.post("/api/sumsub/applicant", async (req, res) => {
+  try {
+    const { applicationId } = req.body || {};
+    if (!applicationId) return res.status(400).json({ ok: false, error: "applicationId required" });
+
+    const appRow = await pool.query(
+      "SELECT id, full_name, email FROM applications WHERE id=$1 LIMIT 1",
+      [Number(applicationId)]
+    );
+    if (appRow.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: "Application not found" });
+    }
+
+    const appToken = requireEnv("SUMSUB_APP_TOKEN");
+    const baseUrl = "https://api.sumsub.com";
+
+    const ts = Math.floor(Date.now() / 1000);
+    const method = "POST";
+    const apiPath = "/resources/applicants?levelName=id-and-liveness";
+
+    const bodyObj = {
+      externalUserId: `application_${applicationId}`,
+      email: appRow.rows[0].email,
+    };
+    const body = JSON.stringify(bodyObj);
+
+    const sig = signSumsubRequest({ ts, method, path: apiPath, body });
+
+    const resp = await axios.post(`${baseUrl}${apiPath}`, bodyObj, {
+      headers: {
+        "X-App-Token": appToken,
+        "X-App-Access-Ts": ts,
+        "X-App-Access-Sig": sig,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const applicantId = resp.data?.id || resp.data?.applicantId;
+    if (!applicantId) return res.status(500).json({ ok: false, error: "No applicantId returned by Sumsub" });
+
+    await pool.query(
+      `UPDATE applications
+       SET kyc_status='IN_PROGRESS',
+           external_applicant_id=$1,
+           updated_at=NOW()
+       WHERE id=$2`,
+      [applicantId, Number(applicationId)]
+    );
+
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "SUMSUB_APPLICANT_CREATED",
+      { applicationId, applicantId },
+    ]);
+
+    res.json({ ok: true, applicantId });
+  } catch (e) {
+    console.error("Sumsub applicant error:", e?.response?.data || e);
+    res.status(500).json({
+      ok: false,
+      error: "Sumsub applicant create failed",
+      details: e?.response?.data || e.message,
+    });
+  }
+});
+
+/**
+ * Step 7B: Create Sumsub WebSDK access token
+ */
+app.post("/api/sumsub/access-token", async (req, res) => {
+  try {
+    const { applicantId } = req.body || {};
+    if (!applicantId) return res.status(400).json({ ok: false, error: "applicantId required" });
+
+    const appToken = requireEnv("SUMSUB_APP_TOKEN");
+    const baseUrl = "https://api.sumsub.com";
+
+    const ts = Math.floor(Date.now() / 1000);
+    const method = "POST";
+    const apiPath = `/resources/accessTokens?userId=${encodeURIComponent(applicantId)}&ttlInSecs=1800`;
+    const body = "";
+
+    const sig = signSumsubRequest({ ts, method, path: apiPath, body });
+
+    const resp = await axios.post(`${baseUrl}${apiPath}`, {}, {
+      headers: {
+        "X-App-Token": appToken,
+        "X-App-Access-Ts": ts,
+        "X-App-Access-Sig": sig,
+      },
+    });
+
+    const token = resp.data?.token || resp.data?.accessToken;
+    if (!token) return res.status(500).json({ ok: false, error: "No token returned by Sumsub" });
+
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "SUMSUB_ACCESS_TOKEN_CREATED",
+      { applicantId },
+    ]);
+
+    res.json({ ok: true, token });
+  } catch (e) {
+    console.error("Sumsub token error:", e?.response?.data || e);
+    res.status(500).json({
+      ok: false,
+      error: "Sumsub access token failed",
+      details: e?.response?.data || e.message,
+    });
   }
 });
 

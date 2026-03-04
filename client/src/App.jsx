@@ -7,6 +7,9 @@ import {
   startKyc,
   sendSumsubWebhook,
   listAudits,
+  listCustomers,
+  listContracts,
+  contractPdfUrl,
 } from "./api";
 
 function Toast({ toast, onClose }) {
@@ -191,7 +194,7 @@ function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
       </table>
 
       <div style={{ color: "#6b7280", fontSize: 13, marginTop: 8 }}>
-        Tip: Go to <b>Audit Logs</b> tab to search and view all.
+        Tip: Use <b>Customers</b> / <b>Contracts</b> tabs for full lists. Use <b>Audit Logs</b> for compliance search.
       </div>
     </>
   );
@@ -532,12 +535,191 @@ function AuditLogsPage({ showToast }) {
   );
 }
 
+function CustomersPage({ showToast }) {
+  const [limit] = useState(50);
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState({ limit: 50, offset: 0, total: 0 });
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await listCustomers({ limit, offset });
+      if (!res.ok) {
+        showToast(res.error || "Failed to load customers", "error");
+        return;
+      }
+      setRows(res.customers || []);
+      setPage(res.page || { limit, offset, total: 0 });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offset]);
+
+  const canPrev = offset > 0;
+  const canNext = offset + limit < (page.total || 0);
+
+  return (
+    <>
+      <h2 style={{ marginTop: 0 }}>Customers</h2>
+
+      <div style={{ color: "#6b7280", fontSize: 13, margin: "8px 0 12px" }}>
+        Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of{" "}
+        {page.total}
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style={{ width: 70 }}>ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th style={{ width: 120 }}>Risk Tier</th>
+            <th style={{ width: 220 }}>Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => (
+            <tr key={c.id}>
+              <td>{c.id}</td>
+              <td>{c.full_name}</td>
+              <td>{c.email}</td>
+              <td>{c.risk_tier}</td>
+              <td>{new Date(c.created_at).toLocaleString()}</td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan="5" style={{ padding: 12, textAlign: "center" }}>
+                No customers
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button
+          type="button"
+          disabled={!canPrev || loading}
+          onClick={() => setOffset(Math.max(0, offset - limit))}
+        >
+          Prev
+        </button>
+        <button type="button" disabled={!canNext || loading} onClick={() => setOffset(offset + limit)}>
+          Next
+        </button>
+      </div>
+    </>
+  );
+}
+
+function ContractsPage({ showToast }) {
+  const [limit] = useState(50);
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState({ limit: 50, offset: 0, total: 0 });
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await listContracts({ limit, offset });
+      if (!res.ok) {
+        showToast(res.error || "Failed to load contracts", "error");
+        return;
+      }
+      setRows(res.contracts || []);
+      setPage(res.page || { limit, offset, total: 0 });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offset]);
+
+  const canPrev = offset > 0;
+  const canNext = offset + limit < (page.total || 0);
+
+  return (
+    <>
+      <h2 style={{ marginTop: 0 }}>Contracts</h2>
+
+      <div style={{ color: "#6b7280", fontSize: 13, margin: "8px 0 12px" }}>
+        Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of{" "}
+        {page.total}
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style={{ width: 70 }}>ID</th>
+            <th style={{ width: 150 }}>Policy #</th>
+            <th>Status</th>
+            <th>Customer</th>
+            <th style={{ width: 220 }}>Created</th>
+            <th style={{ width: 140 }}>PDF</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((c) => (
+            <tr key={c.id}>
+              <td>{c.id}</td>
+              <td style={{ fontFamily: "monospace" }}>{c.policy_number}</td>
+              <td>{c.status}</td>
+              <td>
+                {c.customer_name} <div style={{ color: "#6b7280", fontSize: 12 }}>{c.customer_email}</div>
+              </td>
+              <td>{new Date(c.created_at).toLocaleString()}</td>
+              <td>
+                <a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer">
+                  View PDF
+                </a>
+              </td>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan="6" style={{ padding: 12, textAlign: "center" }}>
+                No contracts
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button
+          type="button"
+          disabled={!canPrev || loading}
+          onClick={() => setOffset(Math.max(0, offset - limit))}
+        >
+          Prev
+        </button>
+        <button type="button" disabled={!canNext || loading} onClick={() => setOffset(offset + limit)}>
+          Next
+        </button>
+      </div>
+    </>
+  );
+}
+
 export default function App() {
   const [summary, setSummary] = useState(null);
   const [apps, setApps] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
-  const [tab, setTab] = useState("dashboard"); // dashboard | applications | audits
+
+  const [tab, setTab] = useState("dashboard"); // dashboard | applications | audits | customers | contracts
 
   function showToast(message, type = "info") {
     setToast({ message, type });
@@ -613,6 +795,12 @@ export default function App() {
           <TabButton active={tab === "applications"} onClick={() => setTab("applications")}>
             Applications
           </TabButton>
+          <TabButton active={tab === "customers"} onClick={() => setTab("customers")}>
+            Customers
+          </TabButton>
+          <TabButton active={tab === "contracts"} onClick={() => setTab("contracts")}>
+            Contracts
+          </TabButton>
           <TabButton active={tab === "audits"} onClick={() => setTab("audits")}>
             Audit Logs
           </TabButton>
@@ -648,6 +836,8 @@ export default function App() {
             />
           ) : null}
 
+          {tab === "customers" ? <CustomersPage showToast={showToast} /> : null}
+          {tab === "contracts" ? <ContractsPage showToast={showToast} /> : null}
           {tab === "audits" ? <AuditLogsPage showToast={showToast} /> : null}
         </div>
       </div>

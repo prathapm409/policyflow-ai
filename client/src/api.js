@@ -45,3 +45,19 @@ export async function listAudits({ limit = 25, offset = 0, q = "" } = {}) {
   const res = await fetch(url);
   return res.json();
 }
+
+export async function listCustomers({ limit = 50, offset = 0 } = {}) {
+  const url = `/api/customers?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`;
+  const res = await fetch(url);
+  return res.json();
+}
+
+export async function listContracts({ limit = 50, offset = 0 } = {}) {
+  const url = `/api/contracts?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`;
+  const res = await fetch(url);
+  return res.json();
+}
+
+export function contractPdfUrl(contractId) {
+  return `/api/contracts/${encodeURIComponent(contractId)}/pdf`;
+}

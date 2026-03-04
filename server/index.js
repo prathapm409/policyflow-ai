@@ -5,6 +5,7 @@ const { v4: uuid } = require("uuid");
 const { stringify } = require("csv-stringify/sync");
 const pool = require("./db");
 const { assignRiskTier, monitoringFrequency } = require("./rules");
+const { generateContractPDF } = require("./pdf");
 const path = require("path");
 
 const app = express();
@@ -24,7 +25,6 @@ async function handleSumsubWebhook(payload) {
     payload,
   ]);
 
-  // Non-approved statuses: update application + compliance event
   if (status !== "approved") {
     const normalized = String(status || "unknown").toLowerCase();
 
@@ -43,7 +43,7 @@ async function handleSumsubWebhook(payload) {
     return { ok: true, message: `No automation for status=${normalized}.` };
   }
 
-  // === Idempotency guard (skip if already processed) ===
+  // Idempotency guard
   const appRes = await pool.query(
     "SELECT id, kyc_status, customer_id, contract_id FROM applications WHERE external_applicant_id=$1 LIMIT 1",
     [applicantId]
@@ -59,16 +59,14 @@ async function handleSumsubWebhook(payload) {
         "AUTOMATION_SKIPPED_ALREADY_PROCESSED",
         { applicantId, applicationId: a.id },
       ]);
-
       return { ok: true, skipped: true, message: "Already processed for this application." };
     }
   }
 
-  // Approved: execute automation
   const riskTier = assignRiskTier({ pep, amlScore });
   const monitoring = monitoringFrequency(riskTier);
 
-  // Customer upsert-like behavior (best with UNIQUE customers(external_id))
+  // Customer insert (or fetch existing if unique constraint exists)
   let customer;
   try {
     const customerRes = await pool.query(
@@ -83,7 +81,7 @@ async function handleSumsubWebhook(payload) {
     customer = existing.rows[0];
   }
 
-  // If no application exists, but customer already existed, skip generating extra contracts
+  // If webhook isn't tied to an application, don't keep minting contracts
   if (appRes.rows.length === 0 && customer) {
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "AUTOMATION_SKIPPED_NO_APPLICATION_LINK",
@@ -104,7 +102,6 @@ async function handleSumsubWebhook(payload) {
 
   const result = { customer, contract: contractRes.rows[0], monitoring };
 
-  // Update matching application (if created via Start KYC)
   await pool.query(
     `UPDATE applications
      SET kyc_status='APPROVED',
@@ -216,6 +213,119 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
     res.json({ ok: true, applicantId });
   } catch (e) {
     console.error("Start KYC error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * NEW: Customers list
+ */
+app.get("/api/customers", async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 100), 200);
+    const offset = Math.max(Number(req.query.offset || 0), 0);
+
+    const [dataRes, countRes] = await Promise.all([
+      pool.query(
+        `SELECT id, external_id, full_name, email, risk_tier, created_at
+         FROM customers
+         ORDER BY id DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      pool.query(`SELECT COUNT(*)::int AS total FROM customers`),
+    ]);
+
+    res.json({
+      ok: true,
+      customers: dataRes.rows,
+      page: { limit, offset, total: countRes.rows[0]?.total || 0 },
+    });
+  } catch (e) {
+    console.error("List customers error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * NEW: Contracts list
+ */
+app.get("/api/contracts", async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 100), 200);
+    const offset = Math.max(Number(req.query.offset || 0), 0);
+
+    const [dataRes, countRes] = await Promise.all([
+      pool.query(
+        `SELECT c.id,
+                c.customer_id,
+                c.policy_number,
+                c.status,
+                c.created_at,
+                cu.full_name AS customer_name,
+                cu.email AS customer_email
+         FROM contracts c
+         JOIN customers cu ON cu.id = c.customer_id
+         ORDER BY c.id DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      ),
+      pool.query(`SELECT COUNT(*)::int AS total FROM contracts`),
+    ]);
+
+    res.json({
+      ok: true,
+      contracts: dataRes.rows,
+      page: { limit, offset, total: countRes.rows[0]?.total || 0 },
+    });
+  } catch (e) {
+    console.error("List contracts error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * NEW: Contract PDF download/view
+ */
+app.get("/api/contracts/:id/pdf", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const contractRes = await pool.query(
+      `SELECT c.id, c.customer_id, c.policy_number, c.status, c.created_at
+       FROM contracts c
+       WHERE c.id=$1`,
+      [id]
+    );
+
+    if (contractRes.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: "Contract not found" });
+    }
+
+    const contract = contractRes.rows[0];
+
+    const customerRes = await pool.query(
+      `SELECT id, full_name, email, risk_tier
+       FROM customers
+       WHERE id=$1`,
+      [contract.customer_id]
+    );
+
+    if (customerRes.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: "Customer not found for contract" });
+    }
+
+    const customer = customerRes.rows[0];
+    const pdfBuffer = generateContractPDF({ customer, contract });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="contract_${contract.policy_number}.pdf"`
+    );
+    res.send(pdfBuffer);
+  } catch (e) {
+    console.error("Contract PDF error:", e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });

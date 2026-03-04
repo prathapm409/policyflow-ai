@@ -370,6 +370,38 @@ export default function App() {
                         Simulate Approved
                       </button>
                     ) : null}
+
+                    {hasApplicantId && a.kyc_status !== "REJECTED" ? (
+                      <button
+                        disabled={busy}
+                        type="button"
+                        onClick={async () => {
+                          if (busy) return;
+                          setBusy(true);
+                          try {
+                            await sendSumsubWebhook({
+                              applicantId,
+                              status: "rejected",
+                              fullName: a.full_name,
+                              email: a.email,
+                              pep: false,
+                              amlScore: 42,
+                              reason: "DOCUMENT_MISMATCH",
+                            });
+                            await loadApplications();
+                            await load();
+                            showToast("Webhook: rejected processed", "success");
+                          } catch (e) {
+                            console.error(e);
+                            showToast("Simulate rejected failed", "error");
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        Simulate Rejected
+                      </button>
+                    ) : null}
                   </div>
                 </td>
 

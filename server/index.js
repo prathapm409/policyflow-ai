@@ -25,16 +25,25 @@ async function handleSumsubWebhook(payload) {
     payload
   ]);
 
-  if (status !== "approved") {
-    // If this webhook belongs to an application created via Start KYC, update its status
+
+    if (status !== "approved") {
+    const normalized = String(status || "unknown").toLowerCase();
+
+    // update application status (if this webhook belongs to an application started via Start KYC)
     await pool.query(
       `UPDATE applications
        SET kyc_status=$1, updated_at=NOW()
        WHERE external_applicant_id=$2`,
-      [String(status || "UNKNOWN").toUpperCase(), applicantId]
+      [normalized.toUpperCase(), applicantId]
     );
 
-    return { ok: true, message: "No automation for non-approved status." };
+    // compliance-friendly audit event (explicit rejected vs other statuses)
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      normalized === "rejected" ? "KYC_REJECTED" : "KYC_STATUS_UPDATED",
+      payload,
+    ]);
+
+    return { ok: true, message: `No automation for status=${normalized}.` };
   }
 
   const riskTier = assignRiskTier({ pep, amlScore });

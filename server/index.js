@@ -149,19 +149,15 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
     const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
     if (!raw) return res.status(400).json({ ok: false, error: "Empty body" });
 
-
-
     const payload = JSON.parse(raw);
 
-  
     const applicantId = payload.applicantId || payload.applicant?.id || payload.applicant?.applicantId;
     const type = payload.type || payload.eventType || payload.webhookType;
 
     const reviewAnswer = payload.reviewResult?.reviewAnswer || payload.reviewResult?.reviewStatus;
     const isGreen = String(reviewAnswer || "").toUpperCase() === "GREEN";
- 
- 
-   const isRed = String(reviewAnswer || "").toUpperCase() === "RED";
+
+    const isRed = String(reviewAnswer || "").toUpperCase() === "RED";
     const status = isGreen ? "approved" : isRed ? "rejected" : "pending";
 
     const internalPayload = {
@@ -254,18 +250,21 @@ app.post("/api/sumsub/applicant", async (req, res) => {
 
 /**
  * Step 7B: Create Sumsub WebSDK access token
+ * FIXED: uses externalUserId (application_<applicationId>) instead of applicantId
  */
 app.post("/api/sumsub/access-token", async (req, res) => {
   try {
-    const { applicantId } = req.body || {};
-    if (!applicantId) return res.status(400).json({ ok: false, error: "applicantId required" });
+    const { applicationId } = req.body || {};
+    if (!applicationId) return res.status(400).json({ ok: false, error: "applicationId required" });
+
+    const userId = `application_${Number(applicationId)}`;
 
     const appToken = requireEnv("SUMSUB_APP_TOKEN");
     const baseUrl = "https://api.sumsub.com";
 
     const ts = Math.floor(Date.now() / 1000);
     const method = "POST";
-    const apiPath = `/resources/accessTokens?userId=${encodeURIComponent(applicantId)}&ttlInSecs=1800`;
+    const apiPath = `/resources/accessTokens?userId=${encodeURIComponent(userId)}&ttlInSecs=1800`;
     const body = "";
 
     const sig = signSumsubRequest({ ts, method, path: apiPath, body });
@@ -283,10 +282,10 @@ app.post("/api/sumsub/access-token", async (req, res) => {
 
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "SUMSUB_ACCESS_TOKEN_CREATED",
-      { applicantId },
+      { applicationId, userId },
     ]);
 
-    res.json({ ok: true, token });
+    res.json({ ok: true, token, userId });
   } catch (e) {
     console.error("Sumsub token error:", e?.response?.data || e);
     res.status(500).json({

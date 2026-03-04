@@ -36,11 +36,4 @@ export async function sendSumsubWebhook(payload) {
   });
   return res.json();
 }
-export async function sendSumsubWebhook(payload) {
-  const res = await fetch(`/api/webhook/sumsub`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return res.json();
-}
+

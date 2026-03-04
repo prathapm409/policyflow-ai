@@ -250,8 +250,9 @@ app.post("/api/sumsub/applicant", async (req, res) => {
 
 /**
  * Step 7B: Create Sumsub WebSDK access token
- * FIX: sign body "{}" and send {} (prevents signature mismatch)
- * FIX: uses externalUserId = application_<applicationId>
+ * FINAL FIX:
+ * - uses externalUserId = application_<applicationId>
+ * - accessTokens endpoint expects NO BODY -> send undefined + sign with empty body ""
  */
 app.post("/api/sumsub/access-token", async (req, res) => {
   try {
@@ -267,17 +268,16 @@ app.post("/api/sumsub/access-token", async (req, res) => {
     const method = "POST";
     const apiPath = `/resources/accessTokens?userId=${encodeURIComponent(userId)}&ttlInSecs=1800`;
 
-    // IMPORTANT: body must match exactly what we send
-   const body = ""; // accessTokens expects no body
-   const sig = signSumsubRequest({ ts, method, path: apiPath, body });
+    const body = "";
+    const sig = signSumsubRequest({ ts, method, path: apiPath, body });
 
-   const resp = await axios.post(`${baseUrl}${apiPath}`, undefined, {
-    headers: {
-    "X-App-Token": appToken,
-    "X-App-Access-Ts": ts,
-    "X-App-Access-Sig": sig,
-   },
-   });
+    const resp = await axios.post(`${baseUrl}${apiPath}`, undefined, {
+      headers: {
+        "X-App-Token": appToken,
+        "X-App-Access-Ts": ts,
+        "X-App-Access-Sig": sig,
+      },
+    });
 
     const token = resp.data?.token || resp.data?.accessToken;
     if (!token) return res.status(500).json({ ok: false, error: "No token returned by Sumsub" });

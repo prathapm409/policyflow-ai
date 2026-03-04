@@ -5,6 +5,7 @@ import {
   createApplication,
   listApplications,
   startKyc,
+  sendSumsubWebhook,
 } from "./api";
 
 export default function App() {
@@ -48,12 +49,55 @@ export default function App() {
   async function onCopy(text) {
     try {
       await navigator.clipboard.writeText(text);
-      // keep it simple: no toast lib, just alert
       alert("Copied Applicant ID!");
     } catch (e) {
       console.error(e);
       alert("Copy failed. Please copy manually.");
     }
+  }
+
+  function renderKycProgress(a) {
+    const status = a.kyc_status;
+
+    const pct =
+      status === "PENDING_KYC"
+        ? 0
+        : status === "IN_PROGRESS"
+        ? 50
+        : status === "APPROVED"
+        ? 100
+        : status === "REJECTED"
+        ? 100
+        : 0;
+
+    const color =
+      status === "APPROVED"
+        ? "#16a34a"
+        : status === "REJECTED"
+        ? "#dc2626"
+        : "#2563eb";
+
+    return (
+      <div style={{ minWidth: 140 }}>
+        <div
+          style={{
+            height: 8,
+            background: "#e5e7eb",
+            borderRadius: 999,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: `${pct}%`,
+              height: 8,
+              background: color,
+            }}
+          />
+        </div>
+        <div style={{ fontSize: 12, marginTop: 4 }}>{pct}%</div>
+      </div>
+    );
   }
 
   if (!summary) return <div className="container">Loading...</div>;
@@ -152,6 +196,7 @@ export default function App() {
             <th>Full Name</th>
             <th>Email</th>
             <th>KYC Status</th>
+            <th>Progress</th>
             <th>Risk Tier</th>
             <th>Monitoring</th>
             <th>Applicant ID</th>
@@ -170,8 +215,10 @@ export default function App() {
                 <td>{a.full_name}</td>
                 <td>{a.email}</td>
                 <td>{a.kyc_status}</td>
+                <td>{renderKycProgress(a)}</td>
                 <td>{a.risk_tier || "-"}</td>
                 <td>{a.monitoring_frequency || "-"}</td>
+
                 <td style={{ fontFamily: "monospace" }}>
                   <div
                     style={{
@@ -193,21 +240,46 @@ export default function App() {
                     ) : null}
                   </div>
                 </td>
+
                 <td>
-                  {a.kyc_status === "PENDING_KYC" ? (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await startKyc(a.id);
-                        await loadApplications();
-                      }}
-                    >
-                      Start KYC
-                    </button>
-                  ) : (
-                    "-"
-                  )}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {a.kyc_status === "PENDING_KYC" ? (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await startKyc(a.id);
+                          await loadApplications();
+                          await load();
+                        }}
+                      >
+                        Start KYC
+                      </button>
+                    ) : null}
+
+                    {hasApplicantId ? (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await sendSumsubWebhook({
+                            applicantId,
+                            status: "approved",
+                            fullName: a.full_name,
+                            email: a.email,
+                            pep: false,
+                            amlScore: 42,
+                          });
+                          await loadApplications();
+                          await load();
+                        }}
+                      >
+                        Simulate Approved
+                      </button>
+                    ) : null}
+
+                    {!hasApplicantId && a.kyc_status !== "PENDING_KYC" ? "-" : null}
+                  </div>
                 </td>
+
                 <td>{new Date(a.created_at).toLocaleString()}</td>
               </tr>
             );
@@ -215,7 +287,7 @@ export default function App() {
 
           {apps.length === 0 ? (
             <tr>
-              <td colSpan="9" style={{ textAlign: "center", padding: 12 }}>
+              <td colSpan="10" style={{ textAlign: "center", padding: 12 }}>
                 No applications yet
               </td>
             </tr>

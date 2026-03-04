@@ -150,7 +150,6 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
 
     const payload = JSON.parse(raw);
 
-    // Map Sumsub payload into our internal format
     const applicantId = payload.applicantId || payload.applicant?.id || payload.applicant?.applicantId;
     const type = payload.type || payload.eventType || payload.webhookType;
 
@@ -250,9 +249,10 @@ app.post("/api/sumsub/applicant", async (req, res) => {
 
 /**
  * Step 7B: Create Sumsub WebSDK access token
- * FINAL FIX:
+ * FINAL FIX (works with Sumsub "Unexpected body"):
+ * - accessTokens endpoint expects NO BODY at all -> axios.request with no data
+ * - signs with empty body ""
  * - uses externalUserId = application_<applicationId>
- * - accessTokens endpoint expects NO BODY -> send undefined + sign with empty body ""
  */
 app.post("/api/sumsub/access-token", async (req, res) => {
   try {
@@ -271,12 +271,15 @@ app.post("/api/sumsub/access-token", async (req, res) => {
     const body = "";
     const sig = signSumsubRequest({ ts, method, path: apiPath, body });
 
-    const resp = await axios.post(`${baseUrl}${apiPath}`, undefined, {
+    const resp = await axios.request({
+      method: "POST",
+      url: `${baseUrl}${apiPath}`,
       headers: {
         "X-App-Token": appToken,
         "X-App-Access-Ts": ts,
         "X-App-Access-Sig": sig,
       },
+      // IMPORTANT: do NOT set `data`
     });
 
     const token = resp.data?.token || resp.data?.accessToken;
@@ -597,4 +600,3 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`PolicyFlow AI running on ${port}`);
 });
-

@@ -340,67 +340,67 @@ export default function App() {
                       </button>
                     ) : null}
 
-                    {hasApplicantId && a.kyc_status !== "APPROVED" ? (
-                      <button
-                        disabled={busy}
-                        type="button"
-                        onClick={async () => {
-                          if (busy) return;
-                          setBusy(true);
-                          try {
-                            await sendSumsubWebhook({
-                              applicantId,
-                              status: "approved",
-                              fullName: a.full_name,
-                              email: a.email,
-                              pep: false,
-                              amlScore: 42,
-                            });
-                            await loadApplications();
-                            await load();
-                            showToast("Webhook: approved processed", "success");
-                          } catch (e) {
-                            console.error(e);
-                            showToast("Simulate approved failed", "error");
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        Simulate Approved
-                      </button>
-                    ) : null}
+                    {hasApplicantId ? (
+                      <>
+                        <button
+                          disabled={busy}
+                          type="button"
+                          onClick={async () => {
+                            if (busy) return;
+                            setBusy(true);
+                            try {
+                              await sendSumsubWebhook({
+                                applicantId,
+                                status: "approved",
+                                fullName: a.full_name,
+                                email: a.email,
+                                pep: false,
+                                amlScore: 42,
+                              });
+                              await loadApplications();
+                              await load();
+                              showToast("Set status: APPROVED", "success");
+                            } catch (e) {
+                              console.error(e);
+                              showToast("Set APPROVED failed", "error");
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          Set Approved
+                        </button>
 
-                    {hasApplicantId && a.kyc_status !== "REJECTED" ? (
-                      <button
-                        disabled={busy}
-                        type="button"
-                        onClick={async () => {
-                          if (busy) return;
-                          setBusy(true);
-                          try {
-                            await sendSumsubWebhook({
-                              applicantId,
-                              status: "rejected",
-                              fullName: a.full_name,
-                              email: a.email,
-                              pep: false,
-                              amlScore: 42,
-                              reason: "DOCUMENT_MISMATCH",
-                            });
-                            await loadApplications();
-                            await load();
-                            showToast("Webhook: rejected processed", "success");
-                          } catch (e) {
-                            console.error(e);
-                            showToast("Simulate rejected failed", "error");
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        Simulate Rejected
-                      </button>
+                        <button
+                          disabled={busy}
+                          type="button"
+                          onClick={async () => {
+                            if (busy) return;
+                            setBusy(true);
+                            try {
+                              await sendSumsubWebhook({
+                                applicantId,
+                                status: "rejected",
+                                fullName: a.full_name,
+                                email: a.email,
+                                pep: false,
+                                amlScore: 42,
+                                reason: "DOCUMENT_MISMATCH",
+                              });
+                              await loadApplications();
+                              await load();
+                              showToast("Set status: REJECTED", "success");
+                            } catch (e) {
+                              console.error(e);
+                              showToast("Set REJECTED failed", "error");
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          Set Rejected
+                        </button>
+                      </>
                     ) : null}
                   </div>
                 </td>

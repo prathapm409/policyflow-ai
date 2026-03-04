@@ -5,7 +5,6 @@ const { v4: uuid } = require("uuid");
 const { stringify } = require("csv-stringify/sync");
 const pool = require("./db");
 const { assignRiskTier, monitoringFrequency } = require("./rules");
-const { generateContractPDF } = require("./pdf");
 const path = require("path");
 
 const app = express();
@@ -25,6 +24,7 @@ async function handleSumsubWebhook(payload) {
     payload,
   ]);
 
+  // Non-approved statuses: update application + compliance event
   if (status !== "approved") {
     const normalized = String(status || "unknown").toLowerCase();
 
@@ -43,6 +43,7 @@ async function handleSumsubWebhook(payload) {
     return { ok: true, message: `No automation for status=${normalized}.` };
   }
 
+  // Approved: execute automation
   const riskTier = assignRiskTier({ pep, amlScore });
   const monitoring = monitoringFrequency(riskTier);
 
@@ -65,6 +66,7 @@ async function handleSumsubWebhook(payload) {
 
   const result = { customer, contract: contractRes.rows[0], monitoring };
 
+  // Update matching application (if created via Start KYC)
   await pool.query(
     `UPDATE applications
      SET kyc_status='APPROVED',
@@ -120,7 +122,7 @@ app.post("/api/demo/trigger", async (req, res) => {
 });
 
 /**
- * Applications API (Day-1)
+ * Applications API
  */
 app.post("/api/applications", async (req, res) => {
   try {
@@ -181,7 +183,7 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
 });
 
 /**
- * Summary for dashboard
+ * Summary for dashboard (Top 10 audits)
  */
 app.get("/api/summary", async (req, res) => {
   try {
@@ -210,16 +212,41 @@ app.get("/api/summary", async (req, res) => {
 });
 
 /**
- * NEW: list audits (for Audit Logs page)
+ * Step-1: Paginated audits endpoint (search by event_type)
  */
 app.get("/api/audits", async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 200), 500);
-    const rows = await pool.query(
-      "SELECT id, event_type, payload, created_at FROM audit_logs ORDER BY created_at DESC LIMIT $1",
-      [limit]
-    );
-    res.json({ ok: true, audits: rows.rows });
+    const limit = Math.min(Number(req.query.limit || 25), 100);
+    const offset = Math.max(Number(req.query.offset || 0), 0);
+    const q = String(req.query.q || "").trim();
+
+    const where = q ? "WHERE event_type ILIKE $3" : "";
+    const params = q ? [limit, offset, `%${q}%`] : [limit, offset];
+
+    const dataSql = `
+      SELECT id, event_type, payload, created_at
+      FROM audit_logs
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT $1 OFFSET $2
+    `;
+
+    const countSql = `
+      SELECT COUNT(*)::int AS total
+      FROM audit_logs
+      ${q ? "WHERE event_type ILIKE $1" : ""}
+    `;
+
+    const [dataRes, countRes] = await Promise.all([
+      pool.query(dataSql, params),
+      q ? pool.query(countSql, [`%${q}%`]) : pool.query(countSql),
+    ]);
+
+    res.json({
+      ok: true,
+      audits: dataRes.rows,
+      page: { limit, offset, total: countRes.rows[0]?.total || 0 },
+    });
   } catch (e) {
     console.error("List audits error:", e);
     res.status(500).json({ ok: false, error: e.message });

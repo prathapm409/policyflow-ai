@@ -38,10 +38,10 @@ export async function sendSumsubWebhook(payload) {
   return res.json();
 }
 
-/**
- * NEW: list audits (for Audit Logs page)
- */
-export async function listAudits(limit = 200) {
-  const res = await fetch(`/api/audits?limit=${encodeURIComponent(limit)}`);
+export async function listAudits({ limit = 25, offset = 0, q = "" } = {}) {
+  const url = `/api/audits?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(
+    offset
+  )}&q=${encodeURIComponent(q)}`;
+  const res = await fetch(url);
   return res.json();
 }

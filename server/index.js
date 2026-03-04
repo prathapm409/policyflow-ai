@@ -43,16 +43,54 @@ async function handleSumsubWebhook(payload) {
     return { ok: true, message: `No automation for status=${normalized}.` };
   }
 
+  // === Idempotency guard (skip if already processed) ===
+  const appRes = await pool.query(
+    "SELECT id, kyc_status, customer_id, contract_id FROM applications WHERE external_applicant_id=$1 LIMIT 1",
+    [applicantId]
+  );
+
+  if (appRes.rows.length > 0) {
+    const a = appRes.rows[0];
+    const alreadyApproved = String(a.kyc_status || "").toUpperCase() === "APPROVED";
+    const alreadyLinked = Boolean(a.customer_id) || Boolean(a.contract_id);
+
+    if (alreadyApproved && alreadyLinked) {
+      await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+        "AUTOMATION_SKIPPED_ALREADY_PROCESSED",
+        { applicantId, applicationId: a.id },
+      ]);
+
+      return { ok: true, skipped: true, message: "Already processed for this application." };
+    }
+  }
+
   // Approved: execute automation
   const riskTier = assignRiskTier({ pep, amlScore });
   const monitoring = monitoringFrequency(riskTier);
 
-  const customerRes = await pool.query(
-    "INSERT INTO customers (external_id, full_name, email, risk_tier) VALUES ($1,$2,$3,$4) RETURNING *",
-    [applicantId, fullName, email, riskTier]
-  );
+  // Customer upsert-like behavior (best with UNIQUE customers(external_id))
+  let customer;
+  try {
+    const customerRes = await pool.query(
+      "INSERT INTO customers (external_id, full_name, email, risk_tier) VALUES ($1,$2,$3,$4) RETURNING *",
+      [applicantId, fullName, email, riskTier]
+    );
+    customer = customerRes.rows[0];
+  } catch (e) {
+    const existing = await pool.query("SELECT * FROM customers WHERE external_id=$1 LIMIT 1", [
+      applicantId,
+    ]);
+    customer = existing.rows[0];
+  }
 
-  const customer = customerRes.rows[0];
+  // If no application exists, but customer already existed, skip generating extra contracts
+  if (appRes.rows.length === 0 && customer) {
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "AUTOMATION_SKIPPED_NO_APPLICATION_LINK",
+      { applicantId },
+    ]);
+    return { ok: true, skipped: true, message: "No linked application; skipping contract generation." };
+  }
 
   const contractRes = await pool.query(
     "INSERT INTO contracts (customer_id, policy_number, status) VALUES ($1,$2,$3) RETURNING *",
@@ -212,7 +250,7 @@ app.get("/api/summary", async (req, res) => {
 });
 
 /**
- * Step-1: Paginated audits endpoint (search by event_type)
+ * Paginated audits endpoint (search by event_type)
  */
 app.get("/api/audits", async (req, res) => {
   try {

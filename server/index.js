@@ -268,19 +268,16 @@ app.post("/api/sumsub/access-token", async (req, res) => {
     const apiPath = `/resources/accessTokens?userId=${encodeURIComponent(userId)}&ttlInSecs=1800`;
 
     // IMPORTANT: body must match exactly what we send
-    const bodyObj = {};
-    const body = JSON.stringify(bodyObj); // "{}"
+   const body = ""; // accessTokens expects no body
+   const sig = signSumsubRequest({ ts, method, path: apiPath, body });
 
-    const sig = signSumsubRequest({ ts, method, path: apiPath, body });
-
-    const resp = await axios.post(`${baseUrl}${apiPath}`, bodyObj, {
-      headers: {
-        "X-App-Token": appToken,
-        "X-App-Access-Ts": ts,
-        "X-App-Access-Sig": sig,
-        "Content-Type": "application/json",
-      },
-    });
+   const resp = await axios.post(`${baseUrl}${apiPath}`, undefined, {
+    headers: {
+    "X-App-Token": appToken,
+    "X-App-Access-Ts": ts,
+    "X-App-Access-Sig": sig,
+   },
+   });
 
     const token = resp.data?.token || resp.data?.accessToken;
     if (!token) return res.status(500).json({ ok: false, error: "No token returned by Sumsub" });

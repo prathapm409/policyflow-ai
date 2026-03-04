@@ -22,14 +22,12 @@ async function handleSumsubWebhook(payload) {
 
   await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
     "WEBHOOK_RECEIVED",
-    payload
+    payload,
   ]);
 
-
-    if (status !== "approved") {
+  if (status !== "approved") {
     const normalized = String(status || "unknown").toLowerCase();
 
-    // update application status (if this webhook belongs to an application started via Start KYC)
     await pool.query(
       `UPDATE applications
        SET kyc_status=$1, updated_at=NOW()
@@ -37,7 +35,6 @@ async function handleSumsubWebhook(payload) {
       [normalized.toUpperCase(), applicantId]
     );
 
-    // compliance-friendly audit event (explicit rejected vs other statuses)
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       normalized === "rejected" ? "KYC_REJECTED" : "KYC_STATUS_UPDATED",
       payload,
@@ -63,11 +60,11 @@ async function handleSumsubWebhook(payload) {
 
   await pool.query("INSERT INTO monitoring (customer_id, frequency) VALUES ($1,$2)", [
     customer.id,
-    monitoring
+    monitoring,
   ]);
 
   const result = { customer, contract: contractRes.rows[0], monitoring };
-  // Update matching application (if created via Start KYC)
+
   await pool.query(
     `UPDATE applications
      SET kyc_status='APPROVED',
@@ -82,7 +79,7 @@ async function handleSumsubWebhook(payload) {
 
   await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
     "AUTOMATION_EXECUTED",
-    result
+    result,
   ]);
 
   return { ok: true, ...result };
@@ -112,7 +109,7 @@ app.post("/api/demo/trigger", async (req, res) => {
       fullName: "Jane Carter",
       email: "jane.carter@example.com",
       pep: false,
-      amlScore: 42
+      amlScore: 42,
     };
     const out = await handleSumsubWebhook(sample);
     res.json(out);
@@ -129,19 +126,13 @@ app.post("/api/applications", async (req, res) => {
   try {
     const { fullName, email } = req.body || {};
     if (!fullName || !email) {
-      return res.status(400).json({ ok: false, error: "fullName and email are required" });
+      return res.status(400).json({ ok: false, error: "fullName and email required" });
     }
 
     const out = await pool.query(
       "INSERT INTO applications (full_name, email) VALUES ($1,$2) RETURNING *",
       [fullName, email]
     );
-
-    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
-      "APPLICATION_CREATED",
-      out.rows[0]
-    ]);
-
     res.json({ ok: true, application: out.rows[0] });
   } catch (e) {
     console.error("Create application error:", e);
@@ -151,97 +142,123 @@ app.post("/api/applications", async (req, res) => {
 
 app.get("/api/applications", async (req, res) => {
   try {
-    const apps = await pool.query("SELECT * FROM applications ORDER BY created_at DESC LIMIT 50");
-    res.json({ ok: true, applications: apps.rows });
+    const out = await pool.query(
+      `SELECT id, full_name, email, kyc_status, external_applicant_id, risk_tier, monitoring_frequency, created_at
+       FROM applications
+       ORDER BY id DESC`
+    );
+    res.json({ ok: true, applications: out.rows });
   } catch (e) {
     console.error("List applications error:", e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
 app.post("/api/applications/:id/start-kyc", async (req, res) => {
   try {
-    const id = req.params.id;
+    const id = Number(req.params.id);
+    const applicantId = `SUMSUB-${uuid().slice(0, 10)}`;
 
-    const appRes = await pool.query("SELECT * FROM applications WHERE id=$1", [id]);
-    if (!appRes.rows[0]) return res.status(404).json({ ok: false, error: "Application not found" });
-
-    // Simulated Sumsub applicant id (later we will replace with real Sumsub applicant creation)
-    const externalApplicantId = `SUMSUB-${uuid().slice(0, 10)}`;
-
-    const updated = await pool.query(
+    await pool.query(
       `UPDATE applications
-       SET external_applicant_id=$1,
-           kyc_status='IN_PROGRESS',
+       SET kyc_status='IN_PROGRESS',
+           external_applicant_id=$1,
            updated_at=NOW()
-       WHERE id=$2
-       RETURNING *`,
-      [externalApplicantId, id]
+       WHERE id=$2`,
+      [applicantId, id]
     );
 
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "KYC_STARTED",
-      updated.rows[0]
+      { applicationId: id, applicantId },
     ]);
 
-    res.json({ ok: true, application: updated.rows[0] });
+    res.json({ ok: true, applicantId });
   } catch (e) {
     console.error("Start KYC error:", e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
 /**
- * Dashboard APIs
+ * Summary for dashboard
  */
 app.get("/api/summary", async (req, res) => {
-  const customers = await pool.query("SELECT * FROM customers ORDER BY created_at DESC LIMIT 10");
-  const audits = await pool.query("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 10");
-  const counts = await pool.query(`
-    SELECT
-      (SELECT COUNT(*) FROM customers) AS customers,
-      (SELECT COUNT(*) FROM contracts) AS contracts,
-      (SELECT COUNT(*) FROM audit_logs) AS audits
-  `);
+  try {
+    const customers = await pool.query(
+      "SELECT id, full_name, email, risk_tier, created_at FROM customers ORDER BY id DESC LIMIT 5"
+    );
+    const audits = await pool.query(
+      "SELECT id, event_type, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 10"
+    );
+    const contracts = await pool.query("SELECT id FROM contracts");
 
-  res.json({
-    counts: counts.rows[0],
-    customers: customers.rows,
-    audits: audits.rows
-  });
-});
-
-app.get("/api/contracts/:id/pdf", async (req, res) => {
-  const contractRes = await pool.query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
-  if (!contractRes.rows[0]) return res.status(404).send("Not found");
-
-  const customerRes = await pool.query("SELECT * FROM customers WHERE id=$1", [
-    contractRes.rows[0].customer_id
-  ]);
-
-  const pdf = generateContractPDF({
-    customer: customerRes.rows[0],
-    contract: contractRes.rows[0]
-  });
-
-  res.setHeader("Content-Type", "application/pdf");
-  res.send(pdf);
-});
-
-app.get("/api/audit/export", async (req, res) => {
-  const logs = await pool.query("SELECT * FROM audit_logs ORDER BY created_at DESC");
-  const csv = stringify(logs.rows, { header: true });
-  res.setHeader("Content-Type", "text/csv");
-  res.setHeader("Content-Disposition", "attachment; filename=audit_export.csv");
-  res.send(csv);
+    res.json({
+      ok: true,
+      customers: customers.rows,
+      audits: audits.rows,
+      counts: {
+        customers: Number(customers.rowCount || 0),
+        audits: Number(audits.rowCount || 0),
+        contracts: Number(contracts.rowCount || 0),
+      },
+    });
+  } catch (e) {
+    console.error("Summary error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 /**
- * Serve SPA
+ * NEW: list audits (for Audit Logs page)
+ */
+app.get("/api/audits", async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 200), 500);
+    const rows = await pool.query(
+      "SELECT id, event_type, payload, created_at FROM audit_logs ORDER BY created_at DESC LIMIT $1",
+      [limit]
+    );
+    res.json({ ok: true, audits: rows.rows });
+  } catch (e) {
+    console.error("List audits error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * Audit export
+ */
+app.get("/api/audit/export", async (req, res) => {
+  try {
+    const out = await pool.query("SELECT * FROM audit_logs ORDER BY created_at DESC");
+    const records = out.rows.map((r) => ({
+      id: r.id,
+      event_type: r.event_type,
+      created_at: r.created_at,
+      payload: JSON.stringify(r.payload || {}),
+    }));
+
+    const csv = stringify(records, { header: true });
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="audit_logs.csv"');
+    res.send(csv);
+  } catch (e) {
+    console.error("Export error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * Serve client build (Vite output)
  */
 const clientDist = path.join(__dirname, "..", "client", "dist");
 app.use(express.static(clientDist));
-app.get(/^\/(?!api\/).*/, (req, res) => {
+app.get("*", (req, res) => {
   res.sendFile(path.join(clientDist, "index.html"));
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`PolicyFlow AI running on ${PORT}`));
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`PolicyFlow AI running on ${port}`);
+});

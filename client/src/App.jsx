@@ -6,6 +6,7 @@ import {
   listApplications,
   startKyc,
   sendSumsubWebhook,
+  listAudits,
 } from "./api";
 
 function Toast({ toast, onClose }) {
@@ -23,7 +24,7 @@ function Toast({ toast, onClose }) {
         padding: "10px 12px",
         borderRadius: 10,
         boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
-        maxWidth: 360,
+        maxWidth: 420,
         zIndex: 9999,
         display: "flex",
         gap: 10,
@@ -59,6 +60,10 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
 
+  const [showAllAudits, setShowAllAudits] = useState(false);
+  const [allAudits, setAllAudits] = useState([]);
+  const [auditsLoading, setAuditsLoading] = useState(false);
+
   function showToast(message, type = "info") {
     setToast({ message, type });
     window.clearTimeout(showToast._t);
@@ -73,6 +78,17 @@ export default function App() {
   async function loadApplications() {
     const res = await listApplications();
     if (res.ok) setApps(res.applications);
+  }
+
+  async function loadAllAudits() {
+    setAuditsLoading(true);
+    try {
+      const res = await listAudits(250);
+      if (res.ok) setAllAudits(res.audits);
+      else showToast(res.error || "Failed to load audits", "error");
+    } finally {
+      setAuditsLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -218,7 +234,22 @@ export default function App() {
         </tbody>
       </table>
 
-      <h2>Latest Audit Logs</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <h2 style={{ marginBottom: 0 }}>Latest Audit Logs</h2>
+
+        <button
+          type="button"
+          disabled={auditsLoading}
+          onClick={async () => {
+            const next = !showAllAudits;
+            setShowAllAudits(next);
+            if (next) await loadAllAudits();
+          }}
+        >
+          {showAllAudits ? "Close" : auditsLoading ? "Loading..." : "View all"}
+        </button>
+      </div>
+
       <table>
         <thead>
           <tr>
@@ -239,6 +270,46 @@ export default function App() {
       <a className="link" href="/api/audit/export">
         Download Audit CSV
       </a>
+
+      {showAllAudits ? (
+        <div style={{ marginTop: 18 }}>
+          <h3>All Audit Logs</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Event</th>
+                <th>Time</th>
+                <th>Payload</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allAudits.map((a) => (
+                <tr key={a.id}>
+                  <td>{a.id}</td>
+                  <td>{a.event_type}</td>
+                  <td>{new Date(a.created_at).toLocaleString()}</td>
+                  <td style={{ maxWidth: 520 }}>
+                    <details>
+                      <summary>View</summary>
+                      <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
+                        {JSON.stringify(a.payload, null, 2)}
+                      </pre>
+                    </details>
+                  </td>
+                </tr>
+              ))}
+              {allAudits.length === 0 ? (
+                <tr>
+                  <td colSpan="4" style={{ padding: 12, textAlign: "center" }}>
+                    No audit logs yet
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
 
       <hr style={{ margin: "24px 0" }} />
 

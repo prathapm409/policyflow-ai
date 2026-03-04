@@ -12,7 +12,7 @@ export async function createApplication({ fullName, email }) {
   const res = await fetch("/api/applications", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fullName, email })
+    body: JSON.stringify({ fullName, email }),
   });
   return res.json();
 }
@@ -28,6 +28,7 @@ export async function startKyc(applicationId) {
   });
   return res.json();
 }
+
 export async function sendSumsubWebhook(payload) {
   const res = await fetch(`/api/webhook/sumsub`, {
     method: "POST",
@@ -37,3 +38,10 @@ export async function sendSumsubWebhook(payload) {
   return res.json();
 }
 
+/**
+ * NEW: list audits (for Audit Logs page)
+ */
+export async function listAudits(limit = 200) {
+  const res = await fetch(`/api/audits?limit=${encodeURIComponent(limit)}`);
+  return res.json();
+}

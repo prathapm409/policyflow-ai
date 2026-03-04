@@ -10,6 +10,9 @@ const path = require("path");
 
 const app = express();
 app.use(cors());
+
+// IMPORTANT: raw body for Sumsub real webhook (signature verification later)
+app.use("/api/webhook/sumsub/real", express.raw({ type: "*/*" }));
 app.use(express.json());
 
 async function handleSumsubWebhook(payload) {
@@ -123,7 +126,7 @@ async function handleSumsubWebhook(payload) {
 }
 
 /**
- * Webhook receiver (POC)
+ * POC webhook receiver (simulated)
  */
 app.post("/api/webhook/sumsub", async (req, res) => {
   try {
@@ -131,6 +134,63 @@ app.post("/api/webhook/sumsub", async (req, res) => {
     res.json(out);
   } catch (e) {
     console.error("Webhook error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * REAL webhook receiver (Sumsub sends type like applicantReviewed etc.)
+ * For now: accept and map to our internal format.
+ */
+app.post("/api/webhook/sumsub/real", async (req, res) => {
+  try {
+    const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+    if (!raw) return res.status(400).json({ ok: false, error: "Empty body" });
+
+    const signatureHeader =
+      req.headers["x-payload-digest"] ||
+      req.headers["x-signature"] ||
+      req.headers["x-sumsub-signature"] ||
+      req.headers["x-webhook-signature"];
+
+    // Log signature presence (we will enforce after confirming header name)
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "WEBHOOK_SIGNATURE_CHECK",
+      {
+        signaturePresent: Boolean(signatureHeader),
+        headerKeys: Object.keys(req.headers || {}).slice(0, 30),
+      },
+    ]);
+
+    const payload = JSON.parse(raw);
+
+    // Sumsub payload example in your console shows:
+    // { applicantId, type: "applicantReviewed", reviewResult: { reviewAnswer: "GREEN" | "RED" }, ... }
+    const applicantId = payload.applicantId || payload.applicant?.id || payload.applicant?.applicantId;
+    const type = payload.type || payload.eventType || payload.webhookType;
+
+    const reviewAnswer = payload.reviewResult?.reviewAnswer || payload.reviewResult?.reviewStatus;
+    const isGreen = String(reviewAnswer || "").toUpperCase() === "GREEN";
+    const isRed = String(reviewAnswer || "").toUpperCase() === "RED";
+
+    const status = isGreen ? "approved" : isRed ? "rejected" : "pending";
+
+    const internalPayload = {
+      applicantId,
+      status,
+      fullName: payload.externalUserId || "Unknown",
+      email: "unknown@example.com",
+      pep: false,
+      amlScore: 42,
+      sumsubType: type,
+      sumsubReviewAnswer: reviewAnswer,
+      rawSumsub: payload,
+    };
+
+    const out = await handleSumsubWebhook(internalPayload);
+    res.json({ ok: true, mappedStatus: status, ...out });
+  } catch (e) {
+    console.error("Real webhook error:", e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -218,7 +278,7 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
 });
 
 /**
- * NEW: Customers list
+ * Customers list
  */
 app.get("/api/customers", async (req, res) => {
   try {
@@ -248,7 +308,7 @@ app.get("/api/customers", async (req, res) => {
 });
 
 /**
- * NEW: Contracts list
+ * Contracts list
  */
 app.get("/api/contracts", async (req, res) => {
   try {
@@ -285,7 +345,7 @@ app.get("/api/contracts", async (req, res) => {
 });
 
 /**
- * NEW: Contract PDF download/view
+ * Contract PDF
  */
 app.get("/api/contracts/:id/pdf", async (req, res) => {
   try {
@@ -319,10 +379,7 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
     const pdfBuffer = generateContractPDF({ customer, contract });
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="contract_${contract.policy_number}.pdf"`
-    );
+    res.setHeader("Content-Disposition", `inline; filename="contract_${contract.policy_number}.pdf"`);
     res.send(pdfBuffer);
   } catch (e) {
     console.error("Contract PDF error:", e);
@@ -331,7 +388,7 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
 });
 
 /**
- * Summary for dashboard (Top 10 audits)
+ * Summary (Top 10 audits)
  */
 app.get("/api/summary", async (req, res) => {
   try {
@@ -360,7 +417,7 @@ app.get("/api/summary", async (req, res) => {
 });
 
 /**
- * Paginated audits endpoint (search by event_type)
+ * Paginated audits (search by event_type)
  */
 app.get("/api/audits", async (req, res) => {
   try {
@@ -425,7 +482,7 @@ app.get("/api/audit/export", async (req, res) => {
 });
 
 /**
- * Serve client build (Vite output)
+ * Serve client build
  */
 const clientDist = path.join(__dirname, "..", "client", "dist");
 app.use(express.static(clientDist));

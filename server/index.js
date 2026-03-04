@@ -142,8 +142,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
 
 /**
  * REAL webhook receiver (Sumsub sends type like applicantReviewed etc.)
- 
-*/
+ */
 app.post("/api/webhook/sumsub/real", async (req, res) => {
   try {
     const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
@@ -151,13 +150,14 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
 
     const payload = JSON.parse(raw);
 
+    // Map Sumsub payload into our internal format
     const applicantId = payload.applicantId || payload.applicant?.id || payload.applicant?.applicantId;
     const type = payload.type || payload.eventType || payload.webhookType;
 
     const reviewAnswer = payload.reviewResult?.reviewAnswer || payload.reviewResult?.reviewStatus;
     const isGreen = String(reviewAnswer || "").toUpperCase() === "GREEN";
-
     const isRed = String(reviewAnswer || "").toUpperCase() === "RED";
+
     const status = isGreen ? "approved" : isRed ? "rejected" : "pending";
 
     const internalPayload = {
@@ -250,7 +250,8 @@ app.post("/api/sumsub/applicant", async (req, res) => {
 
 /**
  * Step 7B: Create Sumsub WebSDK access token
- * FIXED: uses externalUserId (application_<applicationId>) instead of applicantId
+ * FIX: sign body "{}" and send {} (prevents signature mismatch)
+ * FIX: uses externalUserId = application_<applicationId>
  */
 app.post("/api/sumsub/access-token", async (req, res) => {
   try {
@@ -265,15 +266,19 @@ app.post("/api/sumsub/access-token", async (req, res) => {
     const ts = Math.floor(Date.now() / 1000);
     const method = "POST";
     const apiPath = `/resources/accessTokens?userId=${encodeURIComponent(userId)}&ttlInSecs=1800`;
-    const body = "";
+
+    // IMPORTANT: body must match exactly what we send
+    const bodyObj = {};
+    const body = JSON.stringify(bodyObj); // "{}"
 
     const sig = signSumsubRequest({ ts, method, path: apiPath, body });
 
-    const resp = await axios.post(`${baseUrl}${apiPath}`, {}, {
+    const resp = await axios.post(`${baseUrl}${apiPath}`, bodyObj, {
       headers: {
         "X-App-Token": appToken,
         "X-App-Access-Ts": ts,
         "X-App-Access-Sig": sig,
+        "Content-Type": "application/json",
       },
     });
 

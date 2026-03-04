@@ -6,10 +6,16 @@ function requireEnv(name) {
   return v;
 }
 
-// Sumsub signing: HMAC SHA256 of ts + method + path + body
-function signSumsubRequest({ ts, method, path, body = "" }) {
+/**
+ * Sumsub signature:
+ * HMAC_SHA256(secret, ts + method + pathWithQuery + body)
+ * IMPORTANT: body must be EXACT string used for request.
+ * For requests with empty JSON body, use "{}" (not "").
+ */
+function signSumsubRequest({ ts, method, path, body }) {
   const secret = requireEnv("SUMSUB_SECRET_KEY");
-  const prehash = `${ts}${method.toUpperCase()}${path}${body}`;
+  const normalizedBody = body === undefined || body === null ? "" : body;
+  const prehash = `${ts}${method.toUpperCase()}${path}${normalizedBody}`;
   return crypto.createHmac("sha256", secret).update(prehash).digest("hex");
 }
 

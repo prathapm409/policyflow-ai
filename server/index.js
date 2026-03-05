@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
+const https = require("https");
 const { v4: uuid } = require("uuid");
 const { stringify } = require("csv-stringify/sync");
 const pool = require("./db");
@@ -249,10 +250,7 @@ app.post("/api/sumsub/applicant", async (req, res) => {
 
 /**
  * Step 7B: Create Sumsub WebSDK access token
- * FINAL FIX (works with Sumsub "Unexpected body"):
- * - accessTokens endpoint expects NO BODY at all -> axios.request with no data
- * - signs with empty body ""
- * - uses externalUserId = application_<applicationId>
+ * FIX: use https.request + Content-Length: 0 so Sumsub sees truly NO BODY.
  */
 app.post("/api/sumsub/access-token", async (req, res) => {
   try {
@@ -260,9 +258,7 @@ app.post("/api/sumsub/access-token", async (req, res) => {
     if (!applicationId) return res.status(400).json({ ok: false, error: "applicationId required" });
 
     const userId = `application_${Number(applicationId)}`;
-
     const appToken = requireEnv("SUMSUB_APP_TOKEN");
-    const baseUrl = "https://api.sumsub.com";
 
     const ts = Math.floor(Date.now() / 1000);
     const method = "POST";
@@ -271,19 +267,45 @@ app.post("/api/sumsub/access-token", async (req, res) => {
     const body = "";
     const sig = signSumsubRequest({ ts, method, path: apiPath, body });
 
-    const resp = await axios.request({
+    const options = {
       method: "POST",
-      url: `${baseUrl}${apiPath}`,
+      hostname: "api.sumsub.com",
+      path: apiPath,
       headers: {
         "X-App-Token": appToken,
         "X-App-Access-Ts": ts,
         "X-App-Access-Sig": sig,
+        "Content-Length": "0",
       },
-      // IMPORTANT: do NOT set `data`
+    };
+
+    const respData = await new Promise((resolve, reject) => {
+      const r = https.request(options, (resp) => {
+        let data = "";
+        resp.setEncoding("utf8");
+        resp.on("data", (chunk) => (data += chunk));
+        resp.on("end", () => resolve({ statusCode: resp.statusCode, data }));
+      });
+      r.on("error", reject);
+      r.end(); // DO NOT write a body
     });
 
-    const token = resp.data?.token || resp.data?.accessToken;
-    if (!token) return res.status(500).json({ ok: false, error: "No token returned by Sumsub" });
+    if (respData.statusCode < 200 || respData.statusCode >= 300) {
+      let details = respData.data;
+      try {
+        details = JSON.parse(respData.data);
+      } catch {}
+      console.error("Sumsub token error:", details);
+      return res.status(500).json({ ok: false, error: "Sumsub access token failed", details });
+    }
+
+    let parsed = {};
+    try {
+      parsed = JSON.parse(respData.data);
+    } catch {}
+
+    const token = parsed?.token || parsed?.accessToken;
+    if (!token) return res.status(500).json({ ok: false, error: "No token returned by Sumsub", details: parsed });
 
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "SUMSUB_ACCESS_TOKEN_CREATED",
@@ -292,12 +314,8 @@ app.post("/api/sumsub/access-token", async (req, res) => {
 
     res.json({ ok: true, token, userId });
   } catch (e) {
-    console.error("Sumsub token error:", e?.response?.data || e);
-    res.status(500).json({
-      ok: false,
-      error: "Sumsub access token failed",
-      details: e?.response?.data || e.message,
-    });
+    console.error("Sumsub token error:", e);
+    res.status(500).json({ ok: false, error: "Sumsub access token failed", details: e.message });
   }
 });
 

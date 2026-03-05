@@ -14,9 +14,7 @@ import {
   getSumsubAccessToken,
 } from "./api";
 
-/** =========================
- *  Toast
- *  ========================= */
+/** Toast */
 function Toast({ toast, onClose }) {
   if (!toast) return null;
   const bg =
@@ -54,9 +52,7 @@ function Toast({ toast, onClose }) {
   );
 }
 
-/** =========================
- *  Common UI
- *  ========================= */
+/** Common UI */
 function StatCard({ title, value, hint }) {
   return (
     <div
@@ -133,9 +129,7 @@ function renderKycProgress(status) {
   );
 }
 
-/** =========================
- *  Sumsub Modal (Step 7C)
- *  ========================= */
+/** Sumsub Modal */
 function SumsubModal({ open, applicationId, onClose }) {
   if (!open) return null;
 
@@ -179,7 +173,6 @@ function SumsubModal({ open, applicationId, onClose }) {
           </button>
         </div>
 
-        {/* WebSDK will mount here */}
         <div
           id="sumsub-websdk-container"
           style={{
@@ -192,9 +185,7 @@ function SumsubModal({ open, applicationId, onClose }) {
   );
 }
 
-/** =========================
- *  Pages
- *  ========================= */
+/** Pages */
 function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
   return (
     <>
@@ -796,7 +787,9 @@ function ContractsPage({ showToast }) {
               <td>{c.status}</td>
               <td>
                 {c.customer_name}
-                <div style={{ color: "rgba(234,240,255,0.65)", fontSize: 12 }}>{c.customer_email}</div>
+                <div style={{ color: "rgba(234,240,255,0.65)", fontSize: 12 }}>
+                  {c.customer_email}
+                </div>
               </td>
               <td>{new Date(c.created_at).toLocaleString()}</td>
               <td>
@@ -838,9 +831,7 @@ function ContractsPage({ showToast }) {
   );
 }
 
-/** =========================
- *  App Root
- *  ========================= */
+/** Root */
 export default function App() {
   const [summary, setSummary] = useState(null);
   const [apps, setApps] = useState([]);
@@ -849,7 +840,7 @@ export default function App() {
 
   const [tab, setTab] = useState("dashboard"); // dashboard | applications | customers | contracts | audits
 
-  // Step 7C modal state
+  // Step 7C modal
   const [sdkOpen, setSdkOpen] = useState(false);
   const [sdkAppId, setSdkAppId] = useState(null);
 
@@ -880,27 +871,28 @@ export default function App() {
   const appCount = useMemo(() => apps.length, [apps.length]);
 
   async function openSumsub(applicationId) {
-    // 1) Ensure script is loaded
+    // DEBUG LOG (your request)
+    console.log("SNSWebSDK exists?", Boolean(window.SNSWebSDK));
+
+    // Fail fast with a helpful toast
     if (!window.SNSWebSDK) {
-      showToast("Sumsub WebSDK script not loaded. Check Network tab for sns-websdk-builder.js", "error");
+      showToast("Sumsub SDK not loaded. Open /sns-websdk-builder.js in browser to verify.", "error");
       return;
     }
 
-    // 2) Ensure applicant exists (409 already exists is OK; we still proceed)
+    // Create applicant (ignore 409)
     try {
       await createSumsubApplicant(applicationId);
     } catch {
       // ignore
     }
 
-    // 3) Get token from backend
     const tokenRes = await getSumsubAccessToken(applicationId);
     if (!tokenRes.ok || !tokenRes.token) {
       showToast(tokenRes.error || "Failed to get Sumsub token", "error");
       return;
     }
 
-    // 4) Open modal and mount SDK
     setSdkAppId(applicationId);
     setSdkOpen(true);
 
@@ -1002,7 +994,7 @@ export default function App() {
           </PillTab>
         </div>
 
-        {/* Content panel */}
+        {/* Panel */}
         <div
           style={{
             background: "rgba(255,255,255,0.07)",

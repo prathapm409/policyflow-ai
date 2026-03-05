@@ -8,12 +8,10 @@
   <body>
     <div id="root"></div>
 
-    <!-- Step 7C: Sumsub WebSDK script (must load, else SNSWebSDK missing) -->
-    <script
-      src="https://static.sumsub.com/idensic/static/sns-websdk-builder.js"
-      crossorigin="anonymous"
-    ></script>
+    <!-- Step 7C FIX: Load Sumsub WebSDK locally (no external domain blocking) -->
+    <script src="/sns-websdk-builder.js"></script>
 
+    <!-- Vite entry -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

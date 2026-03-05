@@ -44,3 +44,34 @@ CREATE TABLE IF NOT EXISTS applications (
   kyc_status TEXT NOT NULL DEFAULT 'PENDING_KYC',
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Ensure applications table has the columns used by server logic (safe for existing DBs)
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS external_applicant_id TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS risk_tier TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS monitoring_frequency TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS customer_id INTEGER;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS contract_id INTEGER;
+
+-- Add FKs if possible (won't break if already exists)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'applications_customer_id_fkey'
+  ) THEN
+    ALTER TABLE applications
+      ADD CONSTRAINT applications_customer_id_fkey
+      FOREIGN KEY (customer_id) REFERENCES customers(id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'applications_contract_id_fkey'
+  ) THEN
+    ALTER TABLE applications
+      ADD CONSTRAINT applications_contract_id_fkey
+      FOREIGN KEY (contract_id) REFERENCES contracts(id);
+  END IF;
+END $$;
+
+-- Optional: prevent duplicate customers per applicant (recommended)
+CREATE UNIQUE INDEX IF NOT EXISTS customers_external_id_unique ON customers(external_id);

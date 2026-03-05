@@ -9,12 +9,13 @@ const pool = require("./db");
 const { assignRiskTier, monitoringFrequency } = require("./rules");
 const { generateContractPDF } = require("./pdf");
 const { requireEnv, signSumsubRequest } = require("./sumsub");
+const { verifySumsubWebhook } = require("./sumsubWebhook");
 const path = require("path");
 
 const app = express();
 app.use(cors());
 
-// IMPORTANT: raw body for Sumsub real webhook (signature verification later)
+// IMPORTANT: raw body for Sumsub real webhook (needed for signature verification)
 app.use("/api/webhook/sumsub/real", express.raw({ type: "*/*" }));
 app.use(express.json());
 
@@ -49,7 +50,7 @@ async function handleSumsubWebhook(payload) {
     return { ok: true, message: `No automation for status=${normalized}.` };
   }
 
-  // Idempotency guard
+  // Idempotency guard (existing logic)
   const appRes = await pool.query(
     "SELECT id, kyc_status, customer_id, contract_id FROM applications WHERE external_applicant_id=$1 LIMIT 1",
     [applicantId]
@@ -93,7 +94,11 @@ async function handleSumsubWebhook(payload) {
       "AUTOMATION_SKIPPED_NO_APPLICATION_LINK",
       { applicantId },
     ]);
-    return { ok: true, skipped: true, message: "No linked application; skipping contract generation." };
+    return {
+      ok: true,
+      skipped: true,
+      message: "No linked application; skipping contract generation.",
+    };
   }
 
   const contractRes = await pool.query(
@@ -143,37 +148,83 @@ app.post("/api/webhook/sumsub", async (req, res) => {
 
 /**
  * REAL webhook receiver (Sumsub sends type like applicantReviewed etc.)
+ * Adds:
+ * - signature verification
+ * - DB idempotency via sumsub_webhook_events
+ * - mapping only automates on applicantReviewed
  */
 app.post("/api/webhook/sumsub/real", async (req, res) => {
   try {
+    // 1) signature verify
+    const sig = verifySumsubWebhook(req);
+    if (!sig.ok) {
+      return res.status(401).json({
+        ok: false,
+        error: "Invalid webhook signature",
+        details: sig,
+      });
+    }
+
+    // 2) parse JSON from raw
     const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
     if (!raw) return res.status(400).json({ ok: false, error: "Empty body" });
-
     const payload = JSON.parse(raw);
 
-    const applicantId = payload.applicantId || payload.applicant?.id || payload.applicant?.applicantId;
-    const type = payload.type || payload.eventType || payload.webhookType;
+    // 3) extract metadata
+    const type = payload.type || payload.eventType || payload.webhookType || "unknown";
+    const applicantId =
+      payload.applicantId || payload.applicant?.id || payload.applicant?.applicantId || null;
 
+    const eventId =
+      payload.eventId ||
+      payload.webhookId ||
+      payload.id ||
+      payload.externalId ||
+      `${type}:${applicantId || "na"}:${payload.createdAt || Date.now()}`;
+
+    // 4) idempotency (requires DB table)
+    try {
+      await pool.query(
+        "INSERT INTO sumsub_webhook_events (event_id, applicant_id, event_type) VALUES ($1,$2,$3)",
+        [String(eventId), applicantId ? String(applicantId) : null, String(type)]
+      );
+    } catch (e) {
+      return res.json({ ok: true, skipped: true, reason: "duplicate_event", eventId });
+    }
+
+    // 5) map review
     const reviewAnswer = payload.reviewResult?.reviewAnswer || payload.reviewResult?.reviewStatus;
     const isGreen = String(reviewAnswer || "").toUpperCase() === "GREEN";
     const isRed = String(reviewAnswer || "").toUpperCase() === "RED";
-
     const status = isGreen ? "approved" : isRed ? "rejected" : "pending";
+
+    // automate only on applicantReviewed
+    const shouldAutomate = String(type).toLowerCase() === "applicantreviewed";
 
     const internalPayload = {
       applicantId,
-      status,
-      fullName: payload.externalUserId || "Unknown",
-      email: "unknown@example.com",
+      status: shouldAutomate ? status : "pending",
+      fullName: payload.externalUserId || payload.applicant?.info?.firstName || "Unknown",
+      email: payload.applicant?.email || "unknown@example.com",
       pep: false,
       amlScore: 42,
       sumsubType: type,
       sumsubReviewAnswer: reviewAnswer,
+      sumsubEventId: eventId,
       rawSumsub: payload,
     };
 
     const out = await handleSumsubWebhook(internalPayload);
-    res.json({ ok: true, mappedStatus: status, ...out });
+
+    return res.json({
+      ok: true,
+      eventId,
+      applicantId,
+      type,
+      reviewAnswer,
+      mappedStatus: internalPayload.status,
+      ...out,
+    });
   } catch (e) {
     console.error("Real webhook error:", e);
     res.status(500).json({ ok: false, error: e.message });
@@ -221,7 +272,8 @@ app.post("/api/sumsub/applicant", async (req, res) => {
     });
 
     const applicantId = resp.data?.id || resp.data?.applicantId;
-    if (!applicantId) return res.status(500).json({ ok: false, error: "No applicantId returned by Sumsub" });
+    if (!applicantId)
+      return res.status(500).json({ ok: false, error: "No applicantId returned by Sumsub" });
 
     await pool.query(
       `UPDATE applications
@@ -250,9 +302,6 @@ app.post("/api/sumsub/applicant", async (req, res) => {
 
 /**
  * Step 7B: Create Sumsub WebSDK access token
- * FINAL:
- * - MUST include levelName (your Sumsub config requires it)
- * - MUST send truly NO BODY -> https.request + Content-Length: 0
  */
 app.post("/api/sumsub/access-token", async (req, res) => {
   try {
@@ -293,7 +342,7 @@ app.post("/api/sumsub/access-token", async (req, res) => {
         resp.on("end", () => resolve({ statusCode: resp.statusCode, data }));
       });
       r.on("error", reject);
-      r.end(); // NO BODY
+      r.end();
     });
 
     if (respData.statusCode < 200 || respData.statusCode >= 300) {
@@ -311,7 +360,8 @@ app.post("/api/sumsub/access-token", async (req, res) => {
     } catch {}
 
     const token = parsed?.token || parsed?.accessToken;
-    if (!token) return res.status(500).json({ ok: false, error: "No token returned by Sumsub", details: parsed });
+    if (!token)
+      return res.status(500).json({ ok: false, error: "No token returned by Sumsub", details: parsed });
 
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "SUMSUB_ACCESS_TOKEN_CREATED",

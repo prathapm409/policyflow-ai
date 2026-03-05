@@ -250,7 +250,9 @@ app.post("/api/sumsub/applicant", async (req, res) => {
 
 /**
  * Step 7B: Create Sumsub WebSDK access token
- * FIX: use https.request + Content-Length: 0 so Sumsub sees truly NO BODY.
+ * FINAL:
+ * - MUST include levelName (your Sumsub config requires it)
+ * - MUST send truly NO BODY -> https.request + Content-Length: 0
  */
 app.post("/api/sumsub/access-token", async (req, res) => {
   try {
@@ -262,7 +264,11 @@ app.post("/api/sumsub/access-token", async (req, res) => {
 
     const ts = Math.floor(Date.now() / 1000);
     const method = "POST";
-    const apiPath = `/resources/accessTokens?userId=${encodeURIComponent(userId)}&ttlInSecs=1800`;
+
+    const apiPath =
+      `/resources/accessTokens?userId=${encodeURIComponent(userId)}` +
+      `&levelName=${encodeURIComponent("id-and-liveness")}` +
+      `&ttlInSecs=1800`;
 
     const body = "";
     const sig = signSumsubRequest({ ts, method, path: apiPath, body });
@@ -287,7 +293,7 @@ app.post("/api/sumsub/access-token", async (req, res) => {
         resp.on("end", () => resolve({ statusCode: resp.statusCode, data }));
       });
       r.on("error", reject);
-      r.end(); // DO NOT write a body
+      r.end(); // NO BODY
     });
 
     if (respData.statusCode < 200 || respData.statusCode >= 300) {

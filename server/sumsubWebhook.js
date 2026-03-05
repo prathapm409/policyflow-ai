@@ -16,16 +16,24 @@ function findFirstHeader(req, names) {
 }
 
 /**
- * Sumsub webhooks can send different signature/digest header names depending on configuration.
- * This verifier tries a set of known header variants.
+ * verifySumsubWebhook(req)
  *
- * If still failing, we log req.headers and update the list.
+ * Modes:
+ * - Strict (default): requires digest+signature headers and verifies them
+ * - Allow unsigned (sandbox helper): if SUMSUB_WEBHOOK_ALLOW_UNSIGNED=true,
+ *   then missing signature headers will be accepted (NOT recommended for production).
+ *
+ * This exists because Sumsub "Test webhook" UI sometimes doesn't send signature headers.
  */
 function verifySumsubWebhook(req) {
+  const allowUnsigned =
+    String(process.env.SUMSUB_WEBHOOK_ALLOW_UNSIGNED || "false").toLowerCase() === "true";
+
+  // We still require the secret env var to exist (so you don't forget it in prod)
   const secret = requireEnv("SUMSUB_SECRET_KEY");
+
   const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("", "utf8");
 
-  // ✅ Add more header candidates
   const digestCandidates = [
     "x-payload-digest",
     "x-sumsub-payload-digest",
@@ -47,7 +55,22 @@ function verifySumsubWebhook(req) {
   const digestHeader = findFirstHeader(req, digestCandidates);
   const signatureHeader = findFirstHeader(req, signatureCandidates);
 
+  // If missing headers, allow only when explicitly enabled
   if (!digestHeader.value || !signatureHeader.value) {
+    if (allowUnsigned) {
+      return {
+        ok: true,
+        skippedVerification: true,
+        warning: "Signature headers missing; accepted because SUMSUB_WEBHOOK_ALLOW_UNSIGNED=true",
+        details: {
+          digestHeaderFound: Boolean(digestHeader.value),
+          signatureHeaderFound: Boolean(signatureHeader.value),
+          digestHeaderName: digestHeader.name,
+          signatureHeaderName: signatureHeader.name,
+        },
+      };
+    }
+
     return {
       ok: false,
       reason: "Missing signature headers",
@@ -67,7 +90,11 @@ function verifySumsubWebhook(req) {
     return {
       ok: false,
       reason: "Digest mismatch",
-      details: { computed: digest, received: digestHeader.value, digestHeaderName: digestHeader.name },
+      details: {
+        digestHeaderName: digestHeader.name,
+        computed: digest,
+        received: digestHeader.value,
+      },
     };
   }
 
@@ -78,14 +105,14 @@ function verifySumsubWebhook(req) {
       ok: false,
       reason: "Signature mismatch",
       details: {
+        signatureHeaderName: signatureHeader.name,
         expected: expectedSig,
         received: signatureHeader.value,
-        signatureHeaderName: signatureHeader.name,
       },
     };
   }
 
-  return { ok: true };
+  return { ok: true, verified: true, digestHeaderName: digestHeader.name, signatureHeaderName: signatureHeader.name };
 }
 
 module.exports = { verifySumsubWebhook };

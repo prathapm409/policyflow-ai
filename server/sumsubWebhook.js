@@ -18,20 +18,15 @@ function findFirstHeader(req, names) {
 /**
  * verifySumsubWebhook(req)
  *
- * Modes:
- * - Strict (default): requires digest+signature headers and verifies them
- * - Allow unsigned (sandbox helper): if SUMSUB_WEBHOOK_ALLOW_UNSIGNED=true,
- *   then missing signature headers will be accepted (NOT recommended for production).
- *
- * This exists because Sumsub "Test webhook" UI sometimes doesn't send signature headers.
+ * Strict by default.
+ * If SUMSUB_WEBHOOK_ALLOW_UNSIGNED=true, then missing signature headers are allowed
+ * (useful for Sumsub Sandbox "Test webhook" UI that may not send signature headers).
  */
 function verifySumsubWebhook(req) {
   const allowUnsigned =
     String(process.env.SUMSUB_WEBHOOK_ALLOW_UNSIGNED || "false").toLowerCase() === "true";
 
-  // We still require the secret env var to exist (so you don't forget it in prod)
   const secret = requireEnv("SUMSUB_SECRET_KEY");
-
   const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("", "utf8");
 
   const digestCandidates = [
@@ -55,7 +50,6 @@ function verifySumsubWebhook(req) {
   const digestHeader = findFirstHeader(req, digestCandidates);
   const signatureHeader = findFirstHeader(req, signatureCandidates);
 
-  // If missing headers, allow only when explicitly enabled
   if (!digestHeader.value || !signatureHeader.value) {
     if (allowUnsigned) {
       return {
@@ -98,7 +92,7 @@ function verifySumsubWebhook(req) {
     };
   }
 
-  // 2) verify signature (HMAC-SHA256 of digest using secret)
+  // 2) verify signature (HMAC-SHA256 of digestHeader using secret)
   const expectedSig = crypto.createHmac("sha256", secret).update(digestHeader.value).digest("hex");
   if (expectedSig !== signatureHeader.value) {
     return {
@@ -112,7 +106,12 @@ function verifySumsubWebhook(req) {
     };
   }
 
-  return { ok: true, verified: true, digestHeaderName: digestHeader.name, signatureHeaderName: signatureHeader.name };
+  return {
+    ok: true,
+    verified: true,
+    digestHeaderName: digestHeader.name,
+    signatureHeaderName: signatureHeader.name,
+  };
 }
 
 module.exports = { verifySumsubWebhook };

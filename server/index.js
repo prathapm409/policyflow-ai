@@ -19,6 +19,15 @@ app.use(cors());
 app.use("/api/webhook/sumsub/real", express.raw({ type: "*/*" }));
 app.use(express.json());
 
+// Debug endpoint: verify Azure env is applied (remove later if you want)
+app.get("/api/debug/env", (req, res) => {
+  res.json({
+    ok: true,
+    allowUnsigned: process.env.SUMSUB_WEBHOOK_ALLOW_UNSIGNED,
+    nodeEnv: process.env.NODE_ENV,
+  });
+});
+
 async function handleSumsubWebhook(payload) {
   const { applicantId, status, fullName, email, pep, amlScore } = payload;
 
@@ -147,30 +156,23 @@ app.post("/api/webhook/sumsub", async (req, res) => {
 });
 
 /**
- * REAL webhook receiver (Sumsub sends type like applicantReviewed etc.)
- * Adds:
- * - signature verification
- * - DB idempotency via sumsub_webhook_events
- * - mapping only automates on applicantReviewed
+ * REAL webhook receiver
  */
 app.post("/api/webhook/sumsub/real", async (req, res) => {
   try {
-    // 1) signature verify
+    // 1) signature verify (or allow unsigned if env enabled)
     const sig = verifySumsubWebhook(req);
     if (!sig.ok) {
-      return res.status(401).json({
-        ok: false,
-        error: "Invalid webhook signature",
-        details: sig,
-      });
+      return res.status(401).json({ ok: false, error: "Invalid webhook signature", details: sig });
     }
 
-    // 2) parse JSON from raw
+    // 2) parse raw body
     const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
     if (!raw) return res.status(400).json({ ok: false, error: "Empty body" });
+
     const payload = JSON.parse(raw);
 
-    // 3) extract metadata
+    // 3) Extract metadata
     const type = payload.type || payload.eventType || payload.webhookType || "unknown";
     const applicantId =
       payload.applicantId || payload.applicant?.id || payload.applicant?.applicantId || null;
@@ -182,7 +184,8 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
       payload.externalId ||
       `${type}:${applicantId || "na"}:${payload.createdAt || Date.now()}`;
 
-    // 4) idempotency (requires DB table)
+    // 4) idempotency table insert (skip duplicates)
+    // NOTE: requires sumsub_webhook_events table to exist
     try {
       await pool.query(
         "INSERT INTO sumsub_webhook_events (event_id, applicant_id, event_type) VALUES ($1,$2,$3)",
@@ -192,13 +195,13 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
       return res.json({ ok: true, skipped: true, reason: "duplicate_event", eventId });
     }
 
-    // 5) map review
+    // 5) Map review answer
     const reviewAnswer = payload.reviewResult?.reviewAnswer || payload.reviewResult?.reviewStatus;
     const isGreen = String(reviewAnswer || "").toUpperCase() === "GREEN";
     const isRed = String(reviewAnswer || "").toUpperCase() === "RED";
     const status = isGreen ? "approved" : isRed ? "rejected" : "pending";
 
-    // automate only on applicantReviewed
+    // Automate only on applicantReviewed
     const shouldAutomate = String(type).toLowerCase() === "applicantreviewed";
 
     const internalPayload = {
@@ -212,12 +215,14 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
       sumsubReviewAnswer: reviewAnswer,
       sumsubEventId: eventId,
       rawSumsub: payload,
+      sumsubSig: sig, // for audit/debug
     };
 
     const out = await handleSumsubWebhook(internalPayload);
 
     return res.json({
       ok: true,
+      skippedVerification: Boolean(sig.skippedVerification),
       eventId,
       applicantId,
       type,

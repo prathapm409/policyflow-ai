@@ -14,10 +14,18 @@ import {
   getSumsubAccessToken,
 } from "./api";
 
+/** =========================
+ *  Toast
+ *  ========================= */
 function Toast({ toast, onClose }) {
   if (!toast) return null;
   const bg =
-    toast.type === "error" ? "#dc2626" : toast.type === "success" ? "#16a34a" : "#2563eb";
+    toast.type === "error"
+      ? "rgba(239,68,68,0.92)"
+      : toast.type === "success"
+      ? "rgba(34,197,94,0.92)"
+      : "rgba(37,99,235,0.92)";
+
   return (
     <div
       style={{
@@ -27,62 +35,60 @@ function Toast({ toast, onClose }) {
         background: bg,
         color: "white",
         padding: "10px 12px",
-        borderRadius: 10,
-        boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
-        maxWidth: 420,
-        zIndex: 9999,
+        borderRadius: 14,
+        boxShadow: "0 16px 50px rgba(0,0,0,0.35)",
+        maxWidth: 560,
+        zIndex: 999999,
         display: "flex",
         gap: 10,
         alignItems: "center",
+        border: "1px solid rgba(255,255,255,0.25)",
+        backdropFilter: "blur(8px)",
       }}
     >
       <div style={{ fontSize: 14, lineHeight: 1.3 }}>{toast.message}</div>
-      <button
-        onClick={onClose}
-        style={{
-          border: "1px solid rgba(255,255,255,0.35)",
-          background: "transparent",
-          color: "white",
-          borderRadius: 8,
-          padding: "4px 8px",
-          cursor: "pointer",
-        }}
-      >
+      <button className="secondary" onClick={onClose} style={{ padding: "8px 10px" }}>
         Close
       </button>
     </div>
   );
 }
 
-function Card({ title, value }) {
+/** =========================
+ *  Common UI
+ *  ========================= */
+function StatCard({ title, value, hint }) {
   return (
     <div
       style={{
-        background: "white",
-        border: "1px solid #e5e7eb",
-        borderRadius: 12,
+        flex: "1 1 220px",
+        background: "rgba(255,255,255,0.07)",
+        border: "1px solid rgba(255,255,255,0.16)",
+        borderRadius: 16,
         padding: 14,
-        minWidth: 160,
+        boxShadow: "0 18px 50px rgba(0,0,0,0.25)",
       }}
     >
-      <div style={{ fontSize: 12, color: "#6b7280" }}>{title}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>{value}</div>
+      <div style={{ fontSize: 12, color: "rgba(234,240,255,0.75)", fontWeight: 800 }}>
+        {title}
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{value}</div>
+      {hint ? <div style={{ fontSize: 12, color: "rgba(234,240,255,0.65)" }}>{hint}</div> : null}
     </div>
   );
 }
 
-function TabButton({ active, children, onClick }) {
+function PillTab({ active, children, onClick }) {
   return (
     <button
       type="button"
+      className={active ? "" : "secondary"}
       onClick={onClick}
       style={{
-        padding: "8px 12px",
-        borderRadius: 10,
-        border: active ? "1px solid #2563eb" : "1px solid #e5e7eb",
-        background: active ? "#eff6ff" : "white",
-        cursor: "pointer",
-        fontWeight: active ? 700 : 600,
+        padding: "10px 14px",
+        borderRadius: 999,
+        fontWeight: 900,
+        border: active ? "1px solid rgba(255,255,255,0.28)" : undefined,
       }}
     >
       {children}
@@ -103,37 +109,105 @@ function renderKycProgress(status) {
       : 0;
 
   const color =
-    status === "APPROVED" ? "#16a34a" : status === "REJECTED" ? "#dc2626" : "#2563eb";
+    status === "APPROVED"
+      ? "rgba(34,197,94,0.95)"
+      : status === "REJECTED"
+      ? "rgba(239,68,68,0.95)"
+      : "rgba(37,99,235,0.95)";
 
   return (
-    <div style={{ minWidth: 140 }}>
+    <div style={{ minWidth: 160 }}>
       <div
         style={{
-          height: 8,
-          background: "#e5e7eb",
+          height: 10,
+          background: "rgba(255,255,255,0.12)",
           borderRadius: 999,
           overflow: "hidden",
+          border: "1px solid rgba(255,255,255,0.12)",
         }}
       >
-        <div style={{ width: `${pct}%`, height: 8, background: color }} />
+        <div style={{ width: `${pct}%`, height: 10, background: color }} />
       </div>
-      <div style={{ fontSize: 12, marginTop: 4 }}>{pct}%</div>
+      <div style={{ fontSize: 12, marginTop: 6, color: "rgba(234,240,255,0.75)" }}>{pct}%</div>
     </div>
   );
 }
 
+/** =========================
+ *  Sumsub Modal (Step 7C)
+ *  ========================= */
+function SumsubModal({ open, applicationId, onClose }) {
+  if (!open) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.55)",
+        zIndex: 99999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        style={{
+          background: "rgba(255,255,255,0.10)",
+          border: "1px solid rgba(255,255,255,0.20)",
+          backdropFilter: "blur(10px)",
+          width: "min(1100px, 100%)",
+          borderRadius: 18,
+          boxShadow: "0 26px 90px rgba(0,0,0,0.45)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            padding: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "rgba(255,255,255,0.08)",
+            borderBottom: "1px solid rgba(255,255,255,0.12)",
+          }}
+        >
+          <div style={{ fontWeight: 900 }}>Sumsub KYC (App #{applicationId})</div>
+          <button className="secondary" onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        {/* WebSDK will mount here */}
+        <div
+          id="sumsub-websdk-container"
+          style={{
+            height: "80vh",
+            background: "white",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** =========================
+ *  Pages
+ *  ========================= */
 function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
   return (
     <>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-        <Card title="Customers" value={summary.counts.customers} />
-        <Card title="Contracts" value={summary.counts.contracts} />
-        <Card title="Audit Logs (latest)" value={summary.counts.audits} />
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+        <StatCard title="Customers" value={summary.counts.customers} hint="Approved KYC users" />
+        <StatCard title="Contracts" value={summary.counts.contracts} hint="Generated policies" />
+        <StatCard title="Audit Logs" value={summary.counts.audits} hint="Latest compliance entries" />
       </div>
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         <button
           disabled={busy}
+          className="success"
           onClick={async () => {
             if (busy) return;
             setBusy(true);
@@ -152,7 +226,7 @@ function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
           {busy ? "Working..." : "Simulate Sumsub Approved"}
         </button>
 
-        <a className="link" href="/api/audit/export" style={{ marginLeft: 8 }}>
+        <a className="link" href="/api/audit/export">
           Download Audit CSV
         </a>
       </div>
@@ -194,10 +268,6 @@ function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
           ))}
         </tbody>
       </table>
-
-      <div style={{ color: "#6b7280", fontSize: 13, marginTop: 8 }}>
-        Tip: Use <b>Customers</b> / <b>Contracts</b> tabs for full lists. Use <b>Audit Logs</b> for compliance search.
-      </div>
     </>
   );
 }
@@ -254,7 +324,7 @@ function ApplicationsPage({
 
   return (
     <>
-      <h2>Applications</h2>
+      <h2 style={{ marginTop: 0 }}>Applications</h2>
 
       <form onSubmit={onCreateApplication} style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -262,189 +332,198 @@ function ApplicationsPage({
             placeholder="Full name"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
-            style={{ padding: 10, minWidth: 240 }}
+            style={{ minWidth: 240 }}
           />
           <input
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={{ padding: 10, minWidth: 240 }}
+            style={{ minWidth: 240 }}
           />
           <button disabled={busy} type="submit">
             {busy ? "Creating..." : "Create Application"}
           </button>
         </div>
-        {appError ? <div style={{ color: "crimson", marginTop: 8 }}>{appError}</div> : null}
+        {appError ? (
+          <div style={{ color: "rgba(255,120,120,0.95)", marginTop: 8 }}>{appError}</div>
+        ) : null}
       </form>
 
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Full Name</th>
-            <th>Email</th>
-            <th>KYC Status</th>
-            <th>Progress</th>
-            <th>Risk Tier</th>
-            <th>Monitoring</th>
-            <th>Applicant ID</th>
-            <th>Actions</th>
-            <th>Created</th>
-          </tr>
-        </thead>
+      <div style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Full Name</th>
+              <th>Email</th>
+              <th>KYC Status</th>
+              <th>Progress</th>
+              <th>Risk Tier</th>
+              <th>Monitoring</th>
+              <th>Applicant ID</th>
+              <th>Actions</th>
+              <th>Created</th>
+            </tr>
+          </thead>
 
-        <tbody>
-          {apps.map((a) => {
-            const applicantId = a.external_applicant_id || "";
-            const hasApplicantId = Boolean(applicantId);
+          <tbody>
+            {apps.map((a) => {
+              const applicantId = a.external_applicant_id || "";
+              const hasApplicantId = Boolean(applicantId);
 
-            return (
-              <tr key={a.id}>
-                <td>{a.id}</td>
-                <td>{a.full_name}</td>
-                <td>{a.email}</td>
-                <td>{a.kyc_status}</td>
-                <td>{renderKycProgress(a.kyc_status)}</td>
-                <td>{a.risk_tier || "-"}</td>
-                <td>{a.monitoring_frequency || "-"}</td>
+              return (
+                <tr key={a.id}>
+                  <td>{a.id}</td>
+                  <td>{a.full_name}</td>
+                  <td>{a.email}</td>
+                  <td>{a.kyc_status}</td>
+                  <td>{renderKycProgress(a.kyc_status)}</td>
+                  <td>{a.risk_tier || "-"}</td>
+                  <td>{a.monitoring_frequency || "-"}</td>
 
-                <td style={{ fontFamily: "monospace" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span>{hasApplicantId ? applicantId : "-"}</span>
-                    {hasApplicantId ? (
+                  <td style={{ fontFamily: "monospace" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span>{hasApplicantId ? applicantId : "-"}</span>
+                      {hasApplicantId ? (
+                        <button
+                          className="secondary"
+                          disabled={busy}
+                          type="button"
+                          onClick={() => onCopy(applicantId)}
+                          style={{ padding: "8px 10px" }}
+                        >
+                          Copy
+                        </button>
+                      ) : null}
+                    </div>
+                  </td>
+
+                  <td>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {a.kyc_status === "PENDING_KYC" ? (
+                        <button
+                          className="secondary"
+                          disabled={busy}
+                          type="button"
+                          onClick={async () => {
+                            if (busy) return;
+                            setBusy(true);
+                            try {
+                              await startKyc(a.id);
+                              await loadApplications();
+                              await refreshAll();
+                              showToast("KYC started", "success");
+                            } catch (e) {
+                              console.error(e);
+                              showToast("Start KYC failed", "error");
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          Start KYC
+                        </button>
+                      ) : null}
+
                       <button
-                        disabled={busy}
-                        type="button"
-                        onClick={() => onCopy(applicantId)}
-                        style={{ padding: "6px 10px" }}
-                      >
-                        Copy
-                      </button>
-                    ) : null}
-                  </div>
-                </td>
-
-                <td>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {a.kyc_status === "PENDING_KYC" ? (
-                      <button
+                        className="success"
                         disabled={busy}
                         type="button"
                         onClick={async () => {
                           if (busy) return;
                           setBusy(true);
                           try {
-                            await startKyc(a.id);
-                            await loadApplications();
-                            await refreshAll();
-                            showToast("KYC started", "success");
-                          } catch (e) {
-                            console.error(e);
-                            showToast("Start KYC failed", "error");
+                            await openSumsub(a.id);
                           } finally {
                             setBusy(false);
                           }
                         }}
                       >
-                        Start KYC
+                        Open KYC
                       </button>
-                    ) : null}
 
-                    <button
-                      disabled={busy}
-                      type="button"
-                      onClick={async () => {
-                        if (busy) return;
-                        setBusy(true);
-                        try {
-                          await openSumsub(a.id);
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                    >
-                      Open KYC (Sumsub)
-                    </button>
+                      {hasApplicantId ? (
+                        <>
+                          <button
+                            className="success"
+                            disabled={busy}
+                            type="button"
+                            onClick={async () => {
+                              if (busy) return;
+                              setBusy(true);
+                              try {
+                                await sendSumsubWebhook({
+                                  applicantId,
+                                  status: "approved",
+                                  fullName: a.full_name,
+                                  email: a.email,
+                                  pep: false,
+                                  amlScore: 42,
+                                });
+                                await loadApplications();
+                                await refreshAll();
+                                showToast("Set status: APPROVED", "success");
+                              } catch (e) {
+                                console.error(e);
+                                showToast("Set APPROVED failed", "error");
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                          >
+                            Set Approved
+                          </button>
 
-                    {hasApplicantId ? (
-                      <>
-                        <button
-                          disabled={busy}
-                          type="button"
-                          onClick={async () => {
-                            if (busy) return;
-                            setBusy(true);
-                            try {
-                              await sendSumsubWebhook({
-                                applicantId,
-                                status: "approved",
-                                fullName: a.full_name,
-                                email: a.email,
-                                pep: false,
-                                amlScore: 42,
-                              });
-                              await loadApplications();
-                              await refreshAll();
-                              showToast("Set status: APPROVED", "success");
-                            } catch (e) {
-                              console.error(e);
-                              showToast("Set APPROVED failed", "error");
-                            } finally {
-                              setBusy(false);
-                            }
-                          }}
-                        >
-                          Set Approved
-                        </button>
+                          <button
+                            className="danger"
+                            disabled={busy}
+                            type="button"
+                            onClick={async () => {
+                              if (busy) return;
+                              setBusy(true);
+                              try {
+                                await sendSumsubWebhook({
+                                  applicantId,
+                                  status: "rejected",
+                                  fullName: a.full_name,
+                                  email: a.email,
+                                  pep: false,
+                                  amlScore: 42,
+                                  reason: "DOCUMENT_MISMATCH",
+                                });
+                                await loadApplications();
+                                await refreshAll();
+                                showToast("Set status: REJECTED", "success");
+                              } catch (e) {
+                                console.error(e);
+                                showToast("Set REJECTED failed", "error");
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                          >
+                            Set Rejected
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </td>
 
-                        <button
-                          disabled={busy}
-                          type="button"
-                          onClick={async () => {
-                            if (busy) return;
-                            setBusy(true);
-                            try {
-                              await sendSumsubWebhook({
-                                applicantId,
-                                status: "rejected",
-                                fullName: a.full_name,
-                                email: a.email,
-                                pep: false,
-                                amlScore: 42,
-                                reason: "DOCUMENT_MISMATCH",
-                              });
-                              await loadApplications();
-                              await refreshAll();
-                              showToast("Set status: REJECTED", "success");
-                            } catch (e) {
-                              console.error(e);
-                              showToast("Set REJECTED failed", "error");
-                            } finally {
-                              setBusy(false);
-                            }
-                          }}
-                        >
-                          Set Rejected
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
+                  <td>{new Date(a.created_at).toLocaleString()}</td>
+                </tr>
+              );
+            })}
+
+            {apps.length === 0 ? (
+              <tr>
+                <td colSpan="10" style={{ textAlign: "center", padding: 12 }}>
+                  No applications yet
                 </td>
-
-                <td>{new Date(a.created_at).toLocaleString()}</td>
               </tr>
-            );
-          })}
-
-          {apps.length === 0 ? (
-            <tr>
-              <td colSpan="10" style={{ textAlign: "center", padding: 12 }}>
-                No applications yet
-              </td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }
@@ -490,10 +569,11 @@ function AuditLogsPage({ showToast }) {
             placeholder="Search event type (e.g., KYC_REJECTED)"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            style={{ padding: 10, minWidth: 300 }}
+            style={{ minWidth: 320 }}
           />
           <button
             type="button"
+            className="secondary"
             disabled={loading}
             onClick={async () => {
               setOffset(0);
@@ -505,7 +585,7 @@ function AuditLogsPage({ showToast }) {
         </div>
       </div>
 
-      <div style={{ color: "#6b7280", fontSize: 13, margin: "8px 0 12px" }}>
+      <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13, margin: "8px 0 12px" }}>
         Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of{" "}
         {page.total}
       </div>
@@ -514,8 +594,8 @@ function AuditLogsPage({ showToast }) {
         <thead>
           <tr>
             <th style={{ width: 70 }}>ID</th>
-            <th style={{ width: 240 }}>Event</th>
-            <th style={{ width: 220 }}>Time</th>
+            <th style={{ width: 260 }}>Event</th>
+            <th style={{ width: 230 }}>Time</th>
             <th>Payload</th>
           </tr>
         </thead>
@@ -525,9 +605,9 @@ function AuditLogsPage({ showToast }) {
               <td>{a.id}</td>
               <td>{a.event_type}</td>
               <td>{new Date(a.created_at).toLocaleString()}</td>
-              <td style={{ maxWidth: 640 }}>
+              <td style={{ maxWidth: 680 }}>
                 <details>
-                  <summary>View</summary>
+                  <summary style={{ cursor: "pointer" }}>View</summary>
                   <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
                     {JSON.stringify(a.payload, null, 2)}
                   </pre>
@@ -547,13 +627,19 @@ function AuditLogsPage({ showToast }) {
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <button
+          className="secondary"
           type="button"
           disabled={!canPrev || loading}
           onClick={() => setOffset(Math.max(0, offset - limit))}
         >
           Prev
         </button>
-        <button type="button" disabled={!canNext || loading} onClick={() => setOffset(offset + limit)}>
+        <button
+          className="secondary"
+          type="button"
+          disabled={!canNext || loading}
+          onClick={() => setOffset(offset + limit)}
+        >
           Next
         </button>
       </div>
@@ -595,7 +681,7 @@ function CustomersPage({ showToast }) {
     <>
       <h2 style={{ marginTop: 0 }}>Customers</h2>
 
-      <div style={{ color: "#6b7280", fontSize: 13, margin: "8px 0 12px" }}>
+      <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13, margin: "8px 0 12px" }}>
         Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of{" "}
         {page.total}
       </div>
@@ -606,8 +692,8 @@ function CustomersPage({ showToast }) {
             <th style={{ width: 70 }}>ID</th>
             <th>Name</th>
             <th>Email</th>
-            <th style={{ width: 120 }}>Risk Tier</th>
-            <th style={{ width: 220 }}>Created</th>
+            <th style={{ width: 130 }}>Risk Tier</th>
+            <th style={{ width: 230 }}>Created</th>
           </tr>
         </thead>
         <tbody>
@@ -632,13 +718,19 @@ function CustomersPage({ showToast }) {
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <button
+          className="secondary"
           type="button"
           disabled={!canPrev || loading}
           onClick={() => setOffset(Math.max(0, offset - limit))}
         >
           Prev
         </button>
-        <button type="button" disabled={!canNext || loading} onClick={() => setOffset(offset + limit)}>
+        <button
+          className="secondary"
+          type="button"
+          disabled={!canNext || loading}
+          onClick={() => setOffset(offset + limit)}
+        >
           Next
         </button>
       </div>
@@ -680,7 +772,7 @@ function ContractsPage({ showToast }) {
     <>
       <h2 style={{ marginTop: 0 }}>Contracts</h2>
 
-      <div style={{ color: "#6b7280", fontSize: 13, margin: "8px 0 12px" }}>
+      <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13, margin: "8px 0 12px" }}>
         Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of{" "}
         {page.total}
       </div>
@@ -689,11 +781,11 @@ function ContractsPage({ showToast }) {
         <thead>
           <tr>
             <th style={{ width: 70 }}>ID</th>
-            <th style={{ width: 150 }}>Policy #</th>
+            <th style={{ width: 160 }}>Policy #</th>
             <th>Status</th>
             <th>Customer</th>
-            <th style={{ width: 220 }}>Created</th>
-            <th style={{ width: 140 }}>PDF</th>
+            <th style={{ width: 230 }}>Created</th>
+            <th style={{ width: 120 }}>PDF</th>
           </tr>
         </thead>
         <tbody>
@@ -703,7 +795,8 @@ function ContractsPage({ showToast }) {
               <td style={{ fontFamily: "monospace" }}>{c.policy_number}</td>
               <td>{c.status}</td>
               <td>
-                {c.customer_name} <div style={{ color: "#6b7280", fontSize: 12 }}>{c.customer_email}</div>
+                {c.customer_name}
+                <div style={{ color: "rgba(234,240,255,0.65)", fontSize: 12 }}>{c.customer_email}</div>
               </td>
               <td>{new Date(c.created_at).toLocaleString()}</td>
               <td>
@@ -725,13 +818,19 @@ function ContractsPage({ showToast }) {
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <button
+          className="secondary"
           type="button"
           disabled={!canPrev || loading}
           onClick={() => setOffset(Math.max(0, offset - limit))}
         >
           Prev
         </button>
-        <button type="button" disabled={!canNext || loading} onClick={() => setOffset(offset + limit)}>
+        <button
+          className="secondary"
+          type="button"
+          disabled={!canNext || loading}
+          onClick={() => setOffset(offset + limit)}
+        >
           Next
         </button>
       </div>
@@ -739,40 +838,16 @@ function ContractsPage({ showToast }) {
   );
 }
 
-function SumsubModal({ open, applicationId, onClose }) {
-  if (!open) return null;
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.55)",
-        zIndex: 99999,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-      }}
-    >
-      <div style={{ background: "white", width: "min(1000px, 100%)", borderRadius: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", padding: 12 }}>
-          <div style={{ fontWeight: 700 }}>Sumsub KYC (App #{applicationId})</div>
-          <button onClick={onClose}>Close</button>
-        </div>
-        <div id="sumsub-websdk-container" style={{ height: "80vh" }} />
-      </div>
-    </div>
-  );
-}
-
+/** =========================
+ *  App Root
+ *  ========================= */
 export default function App() {
   const [summary, setSummary] = useState(null);
   const [apps, setApps] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
 
-  const [tab, setTab] = useState("dashboard"); // dashboard | applications | audits | customers | contracts
+  const [tab, setTab] = useState("dashboard"); // dashboard | applications | customers | contracts | audits
 
   // Step 7C modal state
   const [sdkOpen, setSdkOpen] = useState(false);
@@ -781,7 +856,7 @@ export default function App() {
   function showToast(message, type = "info") {
     setToast({ message, type });
     window.clearTimeout(showToast._t);
-    showToast._t = window.setTimeout(() => setToast(null), 2500);
+    showToast._t = window.setTimeout(() => setToast(null), 2800);
   }
 
   async function loadSummary() {
@@ -805,57 +880,46 @@ export default function App() {
   const appCount = useMemo(() => apps.length, [apps.length]);
 
   async function openSumsub(applicationId) {
-    try {
-      // Ensure applicant exists (409 "already exists" is fine; we just proceed)
-      const aRes = await createSumsubApplicant(applicationId);
-      if (!aRes.ok) {
-        // If backend sends ok:false for "already exists", ignore it by checking message/description
-        // But safest: don't block on applicant creation failure unless it's not a 409 case.
-        console.warn("createSumsubApplicant:", aRes);
-      }
-
-      const tRes = await getSumsubAccessToken(applicationId);
-      if (!tRes.ok || !tRes.token) {
-        showToast(tRes.error || "Failed to get Sumsub access token", "error");
-        return;
-      }
-
-      // open modal
-      setSdkAppId(applicationId);
-      setSdkOpen(true);
-
-      // mount sdk
-      if (!window.SNSWebSDK) {
-        showToast("Sumsub WebSDK script not loaded (SNSWebSDK missing)", "error");
-        return;
-      }
-
-      const el = document.getElementById("sumsub-websdk-container");
-      if (!el) return;
-      el.innerHTML = "";
-
-      const sdk = window.SNSWebSDK.init(tRes.token, async () => {
-        const refresh = await getSumsubAccessToken(applicationId);
-        return refresh.token;
-      })
-        .withConf({
-          lang: "en",
-          theme: "light",
-        })
-        .withOptions({
-          addViewportTag: false,
-          adaptIframeHeight: true,
-        })
-        .on("idCheck.onReady", () => console.log("Sumsub WebSDK ready"))
-        .on("idCheck.onError", (e) => console.error("Sumsub WebSDK error", e))
-        .build();
-
-      sdk.launch("#sumsub-websdk-container");
-      showToast("Opened Sumsub KYC", "success");
-    } catch (e) {
-      console.error(e);
-      showToast("Failed to open Sumsub KYC", "error");
+    // 1) Ensure script is loaded
+    if (!window.SNSWebSDK) {
+      showToast("Sumsub WebSDK script not loaded. Check Network tab for sns-websdk-builder.js", "error");
+      return;
     }
+
+    // 2) Ensure applicant exists (409 already exists is OK; we still proceed)
+    try {
+      await createSumsubApplicant(applicationId);
+    } catch {
+      // ignore
+    }
+
+    // 3) Get token from backend
+    const tokenRes = await getSumsubAccessToken(applicationId);
+    if (!tokenRes.ok || !tokenRes.token) {
+      showToast(tokenRes.error || "Failed to get Sumsub token", "error");
+      return;
+    }
+
+    // 4) Open modal and mount SDK
+    setSdkAppId(applicationId);
+    setSdkOpen(true);
+
+    const el = document.getElementById("sumsub-websdk-container");
+    if (!el) return;
+    el.innerHTML = "";
+
+    const sdk = window.SNSWebSDK.init(tokenRes.token, async () => {
+      const refresh = await getSumsubAccessToken(applicationId);
+      return refresh.token;
+    })
+      .withConf({ lang: "en", theme: "light" })
+      .withOptions({ addViewportTag: false, adaptIframeHeight: true })
+      .on("idCheck.onReady", () => console.log("Sumsub ready"))
+      .on("idCheck.onError", (e) => console.error("Sumsub error", e))
+      .build();
+
+    sdk.launch("#sumsub-websdk-container");
+    showToast("Opened Sumsub KYC", "success");
   }
 
   function closeSumsub() {
@@ -868,25 +932,36 @@ export default function App() {
   if (!summary) return <div style={{ padding: 18 }}>Loading...</div>;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f3f4f6" }}>
+    <div>
       <Toast toast={toast} onClose={() => setToast(null)} />
-
       <SumsubModal open={sdkOpen} applicationId={sdkAppId} onClose={closeSumsub} />
 
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: 18 }}>
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            alignItems: "center",
+            marginBottom: 14,
+          }}
+        >
           <div>
             <h1 style={{ margin: 0 }}>PolicyFlow AI</h1>
-            <div style={{ color: "#6b7280", fontSize: 13, marginTop: 4 }}>
+            <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13, marginTop: 4 }}>
               KYC-to-Revenue Automation Engine (POC)
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ color: "#6b7280", fontSize: 13 }}>
-              Applications: <b>{appCount}</b>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13 }}>
+              Applications: <b style={{ color: "white" }}>{appCount}</b>
             </div>
+
             <button
+              className="secondary"
               type="button"
               disabled={busy}
               onClick={async () => {
@@ -908,31 +983,33 @@ export default function App() {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-          <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+          <PillTab active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
             Dashboard
-          </TabButton>
-          <TabButton active={tab === "applications"} onClick={() => setTab("applications")}>
+          </PillTab>
+          <PillTab active={tab === "applications"} onClick={() => setTab("applications")}>
             Applications
-          </TabButton>
-          <TabButton active={tab === "customers"} onClick={() => setTab("customers")}>
+          </PillTab>
+          <PillTab active={tab === "customers"} onClick={() => setTab("customers")}>
             Customers
-          </TabButton>
-          <TabButton active={tab === "contracts"} onClick={() => setTab("contracts")}>
+          </PillTab>
+          <PillTab active={tab === "contracts"} onClick={() => setTab("contracts")}>
             Contracts
-          </TabButton>
-          <TabButton active={tab === "audits"} onClick={() => setTab("audits")}>
+          </PillTab>
+          <PillTab active={tab === "audits"} onClick={() => setTab("audits")}>
             Audit Logs
-          </TabButton>
+          </PillTab>
         </div>
 
+        {/* Content panel */}
         <div
           style={{
-            background: "white",
-            border: "1px solid #e5e7eb",
-            borderRadius: 14,
+            background: "rgba(255,255,255,0.07)",
+            border: "1px solid rgba(255,255,255,0.16)",
+            borderRadius: 18,
             padding: 16,
-            marginTop: 12,
+            boxShadow: "0 22px 70px rgba(0,0,0,0.30)",
           }}
         >
           {tab === "dashboard" ? (

@@ -8,10 +8,12 @@
   <body>
     <div id="root"></div>
 
-    <!-- Sumsub WebSDK (Step 7C) -->
-    <script src="https://static.sumsub.com/idensic/static/sns-websdk-builder.js"></script>
+    <!-- Step 7C: Sumsub WebSDK script (must load, else SNSWebSDK missing) -->
+    <script
+      src="https://static.sumsub.com/idensic/static/sns-websdk-builder.js"
+      crossorigin="anonymous"
+    ></script>
 
-    <!-- Vite entry -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

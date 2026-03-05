@@ -23,9 +23,7 @@ export async function listApplications() {
 }
 
 export async function startKyc(applicationId) {
-  const res = await fetch(`/api/applications/${applicationId}/start-kyc`, {
-    method: "POST",
-  });
+  const res = await fetch(`/api/applications/${applicationId}/start-kyc`, { method: "POST" });
   return res.json();
 }
 
@@ -47,17 +45,13 @@ export async function listAudits({ limit = 25, offset = 0, q = "" } = {}) {
 }
 
 export async function listCustomers({ limit = 50, offset = 0 } = {}) {
-  const url = `/api/customers?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(
-    offset
-  )}`;
+  const url = `/api/customers?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`;
   const res = await fetch(url);
   return res.json();
 }
 
 export async function listContracts({ limit = 50, offset = 0 } = {}) {
-  const url = `/api/contracts?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(
-    offset
-  )}`;
+  const url = `/api/contracts?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`;
   const res = await fetch(url);
   return res.json();
 }
@@ -66,9 +60,7 @@ export function contractPdfUrl(contractId) {
   return `/api/contracts/${encodeURIComponent(contractId)}/pdf`;
 }
 
-/**
- * Step 7C: Sumsub WebSDK helpers
- */
+/** Step 7C: Sumsub WebSDK helpers */
 export async function createSumsubApplicant(applicationId) {
   const res = await fetch("/api/sumsub/applicant", {
     method: "POST",

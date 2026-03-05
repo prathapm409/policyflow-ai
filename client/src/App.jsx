@@ -10,6 +10,8 @@ import {
   listCustomers,
   listContracts,
   contractPdfUrl,
+  createSumsubApplicant,
+  getSumsubAccessToken,
 } from "./api";
 
 function Toast({ toast, onClose }) {
@@ -200,7 +202,15 @@ function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
   );
 }
 
-function ApplicationsPage({ apps, busy, setBusy, showToast, loadApplications, refreshAll }) {
+function ApplicationsPage({
+  apps,
+  busy,
+  setBusy,
+  showToast,
+  loadApplications,
+  refreshAll,
+  openSumsub,
+}) {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [appError, setAppError] = useState("");
@@ -339,6 +349,22 @@ function ApplicationsPage({ apps, busy, setBusy, showToast, loadApplications, re
                         Start KYC
                       </button>
                     ) : null}
+
+                    <button
+                      disabled={busy}
+                      type="button"
+                      onClick={async () => {
+                        if (busy) return;
+                        setBusy(true);
+                        try {
+                          await openSumsub(a.id);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Open KYC (Sumsub)
+                    </button>
 
                     {hasApplicantId ? (
                       <>
@@ -713,6 +739,33 @@ function ContractsPage({ showToast }) {
   );
 }
 
+function SumsubModal({ open, applicationId, onClose }) {
+  if (!open) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.55)",
+        zIndex: 99999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div style={{ background: "white", width: "min(1000px, 100%)", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", padding: 12 }}>
+          <div style={{ fontWeight: 700 }}>Sumsub KYC (App #{applicationId})</div>
+          <button onClick={onClose}>Close</button>
+        </div>
+        <div id="sumsub-websdk-container" style={{ height: "80vh" }} />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [summary, setSummary] = useState(null);
   const [apps, setApps] = useState([]);
@@ -720,6 +773,10 @@ export default function App() {
   const [toast, setToast] = useState(null);
 
   const [tab, setTab] = useState("dashboard"); // dashboard | applications | audits | customers | contracts
+
+  // Step 7C modal state
+  const [sdkOpen, setSdkOpen] = useState(false);
+  const [sdkAppId, setSdkAppId] = useState(null);
 
   function showToast(message, type = "info") {
     setToast({ message, type });
@@ -747,11 +804,74 @@ export default function App() {
 
   const appCount = useMemo(() => apps.length, [apps.length]);
 
+  async function openSumsub(applicationId) {
+    try {
+      // Ensure applicant exists (409 "already exists" is fine; we just proceed)
+      const aRes = await createSumsubApplicant(applicationId);
+      if (!aRes.ok) {
+        // If backend sends ok:false for "already exists", ignore it by checking message/description
+        // But safest: don't block on applicant creation failure unless it's not a 409 case.
+        console.warn("createSumsubApplicant:", aRes);
+      }
+
+      const tRes = await getSumsubAccessToken(applicationId);
+      if (!tRes.ok || !tRes.token) {
+        showToast(tRes.error || "Failed to get Sumsub access token", "error");
+        return;
+      }
+
+      // open modal
+      setSdkAppId(applicationId);
+      setSdkOpen(true);
+
+      // mount sdk
+      if (!window.SNSWebSDK) {
+        showToast("Sumsub WebSDK script not loaded (SNSWebSDK missing)", "error");
+        return;
+      }
+
+      const el = document.getElementById("sumsub-websdk-container");
+      if (!el) return;
+      el.innerHTML = "";
+
+      const sdk = window.SNSWebSDK.init(tRes.token, async () => {
+        const refresh = await getSumsubAccessToken(applicationId);
+        return refresh.token;
+      })
+        .withConf({
+          lang: "en",
+          theme: "light",
+        })
+        .withOptions({
+          addViewportTag: false,
+          adaptIframeHeight: true,
+        })
+        .on("idCheck.onReady", () => console.log("Sumsub WebSDK ready"))
+        .on("idCheck.onError", (e) => console.error("Sumsub WebSDK error", e))
+        .build();
+
+      sdk.launch("#sumsub-websdk-container");
+      showToast("Opened Sumsub KYC", "success");
+    } catch (e) {
+      console.error(e);
+      showToast("Failed to open Sumsub KYC", "error");
+    }
+  }
+
+  function closeSumsub() {
+    setSdkOpen(false);
+    setSdkAppId(null);
+    const el = document.getElementById("sumsub-websdk-container");
+    if (el) el.innerHTML = "";
+  }
+
   if (!summary) return <div style={{ padding: 18 }}>Loading...</div>;
 
   return (
     <div style={{ minHeight: "100vh", background: "#f3f4f6" }}>
       <Toast toast={toast} onClose={() => setToast(null)} />
+
+      <SumsubModal open={sdkOpen} applicationId={sdkAppId} onClose={closeSumsub} />
 
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: 18 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -833,6 +953,7 @@ export default function App() {
               showToast={showToast}
               loadApplications={loadApplications}
               refreshAll={refreshAll}
+              openSumsub={openSumsub}
             />
           ) : null}
 

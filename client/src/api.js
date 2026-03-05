@@ -60,7 +60,6 @@ export function contractPdfUrl(contractId) {
   return `/api/contracts/${encodeURIComponent(contractId)}/pdf`;
 }
 
-/** Step 7C: Sumsub WebSDK helpers */
 export async function createSumsubApplicant(applicationId) {
   const res = await fetch("/api/sumsub/applicant", {
     method: "POST",

@@ -14,7 +14,25 @@ import {
   getSumsubAccessToken,
 } from "./api";
 
-/** Toast */
+/** -------- helpers -------- */
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Wait until window.SNSWebSDK exists.
+ * This solves "script loaded but slow" and avoids false "SDK not loaded" toasts.
+ */
+async function waitForSNSWebSDK({ timeoutMs = 8000, stepMs = 200 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (window.SNSWebSDK) return true;
+    await sleep(stepMs);
+  }
+  return Boolean(window.SNSWebSDK);
+}
+
+/** -------- Toast -------- */
 function Toast({ toast, onClose }) {
   if (!toast) return null;
   const bg =
@@ -52,7 +70,6 @@ function Toast({ toast, onClose }) {
   );
 }
 
-/** Common UI */
 function StatCard({ title, value, hint }) {
   return (
     <div
@@ -129,7 +146,7 @@ function renderKycProgress(status) {
   );
 }
 
-/** Sumsub Modal */
+/** -------- Sumsub Modal -------- */
 function SumsubModal({ open, applicationId, onClose }) {
   if (!open) return null;
 
@@ -173,19 +190,13 @@ function SumsubModal({ open, applicationId, onClose }) {
           </button>
         </div>
 
-        <div
-          id="sumsub-websdk-container"
-          style={{
-            height: "80vh",
-            background: "white",
-          }}
-        />
+        <div id="sumsub-websdk-container" style={{ height: "80vh", background: "white" }} />
       </div>
     </div>
   );
 }
 
-/** Pages */
+/** -------- Pages -------- */
 function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
   return (
     <>
@@ -237,24 +248,6 @@ function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
               <td>{c.full_name}</td>
               <td>{c.email}</td>
               <td>{c.risk_tier}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h2 style={{ marginTop: 18 }}>Latest Audit Logs (Top 10)</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Event</th>
-            <th>Time</th>
-          </tr>
-        </thead>
-        <tbody>
-          {summary.audits.map((a) => (
-            <tr key={a.id}>
-              <td>{a.event_type}</td>
-              <td>{new Date(a.created_at).toLocaleString()}</td>
             </tr>
           ))}
         </tbody>
@@ -831,18 +824,21 @@ function ContractsPage({ showToast }) {
   );
 }
 
-/** Root */
+/** -------- Root -------- */
 export default function App() {
   const [summary, setSummary] = useState(null);
   const [apps, setApps] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
 
-  const [tab, setTab] = useState("dashboard"); // dashboard | applications | customers | contracts | audits
+  const [tab, setTab] = useState("dashboard");
 
-  // Step 7C modal
+  // Step 7C modal state
   const [sdkOpen, setSdkOpen] = useState(false);
   const [sdkAppId, setSdkAppId] = useState(null);
+
+  // UI debug: show if SDK exists
+  const [sdkReady, setSdkReady] = useState(Boolean(window.SNSWebSDK));
 
   function showToast(message, type = "info") {
     setToast({ message, type });
@@ -868,24 +864,37 @@ export default function App() {
     refreshAll();
   }, []);
 
+  // Poll once on load to mark SDK readiness
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ok = await waitForSNSWebSDK({ timeoutMs: 8000, stepMs: 200 });
+      if (!cancelled) setSdkReady(ok);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const appCount = useMemo(() => apps.length, [apps.length]);
 
   async function openSumsub(applicationId) {
-    // DEBUG LOG (your request)
-    console.log("SNSWebSDK exists?", Boolean(window.SNSWebSDK));
+    // Wait for SDK (important)
+    const ok = await waitForSNSWebSDK({ timeoutMs: 8000, stepMs: 200 });
+    setSdkReady(ok);
 
-    // Fail fast with a helpful toast
-    if (!window.SNSWebSDK) {
-      showToast("Sumsub SDK not loaded. Open /sns-websdk-builder.js in browser to verify.", "error");
+    if (!ok) {
+      showToast(
+        "Sumsub SDK still not available. Hard refresh (Ctrl+F5) and try again.",
+        "error"
+      );
       return;
     }
 
-    // Create applicant (ignore 409)
+    // Ensure applicant exists (ignore 409)
     try {
       await createSumsubApplicant(applicationId);
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     const tokenRes = await getSumsubAccessToken(applicationId);
     if (!tokenRes.ok || !tokenRes.token) {
@@ -896,6 +905,7 @@ export default function App() {
     setSdkAppId(applicationId);
     setSdkOpen(true);
 
+    // Mount SDK
     const el = document.getElementById("sumsub-websdk-container");
     if (!el) return;
     el.innerHTML = "";
@@ -929,7 +939,6 @@ export default function App() {
       <SumsubModal open={sdkOpen} applicationId={sdkAppId} onClose={closeSumsub} />
 
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: 18 }}>
-        {/* Header */}
         <div
           style={{
             display: "flex",
@@ -944,6 +953,9 @@ export default function App() {
             <h1 style={{ margin: 0 }}>PolicyFlow AI</h1>
             <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13, marginTop: 4 }}>
               KYC-to-Revenue Automation Engine (POC)
+              <span style={{ marginLeft: 10, fontWeight: 800 }}>
+                • SDK: {sdkReady ? "READY" : "NOT READY"}
+              </span>
             </div>
           </div>
 
@@ -975,7 +987,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tabs */}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
           <PillTab active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
             Dashboard
@@ -994,7 +1005,6 @@ export default function App() {
           </PillTab>
         </div>
 
-        {/* Panel */}
         <div
           style={{
             background: "rgba(255,255,255,0.07)",

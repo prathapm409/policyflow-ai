@@ -14,12 +14,13 @@ import {
   getSumsubAccessToken,
 } from "./api";
 
+/** ---------- helpers ---------- */
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
 function getSumsubSdk() {
-  // Your browser shows this exists: window.snsWebSdk
+  // Your environment: window.snsWebSdk exists (not window.SNSWebSDK)
   return window.SNSWebSDK || window.snsWebSdk || null;
 }
 
@@ -32,6 +33,7 @@ async function waitForSumsubSdk({ timeoutMs = 8000, stepMs = 200 } = {}) {
   return Boolean(getSumsubSdk());
 }
 
+/** ---------- Toast ---------- */
 function Toast({ toast, onClose }) {
   if (!toast) return null;
   const bg =
@@ -40,6 +42,7 @@ function Toast({ toast, onClose }) {
       : toast.type === "success"
       ? "rgba(34,197,94,0.92)"
       : "rgba(37,99,235,0.92)";
+
   return (
     <div
       style={{
@@ -68,6 +71,7 @@ function Toast({ toast, onClose }) {
   );
 }
 
+/** ---------- UI ---------- */
 function StatCard({ title, value, hint }) {
   return (
     <div
@@ -144,6 +148,7 @@ function renderKycProgress(status) {
   );
 }
 
+/** ---------- Sumsub Modal ---------- */
 function SumsubModal({ open, applicationId, onClose }) {
   if (!open) return null;
 
@@ -193,6 +198,7 @@ function SumsubModal({ open, applicationId, onClose }) {
   );
 }
 
+/** ---------- Pages ---------- */
 function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
   return (
     <>
@@ -228,6 +234,44 @@ function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
           Download Audit CSV
         </a>
       </div>
+
+      <h2 style={{ marginTop: 18 }}>Latest Customers</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Risk Tier</th>
+          </tr>
+        </thead>
+        <tbody>
+          {summary.customers.map((c) => (
+            <tr key={c.id}>
+              <td>{c.full_name}</td>
+              <td>{c.email}</td>
+              <td>{c.risk_tier}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2 style={{ marginTop: 18 }}>Latest Audit Logs (Top 10)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Event</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {summary.audits.map((a) => (
+            <tr key={a.id}>
+              <td>{a.event_type}</td>
+              <td>{new Date(a.created_at).toLocaleString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </>
   );
 }
@@ -800,14 +844,16 @@ function ContractsPage({ showToast }) {
   );
 }
 
+/** ---------- ROOT ---------- */
 export default function App() {
   const [summary, setSummary] = useState(null);
   const [apps, setApps] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
 
-  const [tab, setTab] = useState("applications");
+  const [tab, setTab] = useState("dashboard");
 
+  // Sumsub modal
   const [sdkOpen, setSdkOpen] = useState(false);
   const [sdkAppId, setSdkAppId] = useState(null);
 
@@ -850,13 +896,14 @@ export default function App() {
 
   const appCount = useMemo(() => apps.length, [apps.length]);
 
+  /** ✅ FIXED: launch(containerEl) */
   async function openSumsub(applicationId) {
     const ok = await waitForSumsubSdk({ timeoutMs: 8000, stepMs: 200 });
     setSdkReady(ok);
 
     const SDK = getSumsubSdk();
     if (!ok || !SDK) {
-      showToast("Sumsub SDK not ready. Found only window.snsWebSdk? Refresh once and retry.", "error");
+      showToast("Sumsub SDK not ready. Hard refresh (Ctrl+F5) and try again.", "error");
       return;
     }
 
@@ -874,27 +921,48 @@ export default function App() {
     setSdkAppId(applicationId);
     setSdkOpen(true);
 
-    const el = document.getElementById("sumsub-websdk-container");
-    if (!el) return;
-    el.innerHTML = "";
+    // Wait a tick so modal DOM exists
+    await sleep(0);
+
+    const containerEl = document.getElementById("sumsub-websdk-container");
+    if (!containerEl) {
+      showToast("Sumsub container not found in DOM", "error");
+      return;
+    }
+    containerEl.innerHTML = "";
 
     if (typeof SDK.init !== "function") {
-      showToast("Sumsub SDK loaded but init() is missing on window.snsWebSdk.", "error");
+      showToast("Sumsub SDK loaded but init() missing.", "error");
       return;
     }
 
-    const sdkInstance = SDK.init(tokenRes.token, async () => {
-      const refresh = await getSumsubAccessToken(applicationId);
-      return refresh.token;
-    })
-      .withConf({ lang: "en", theme: "light" })
-      .withOptions({ addViewportTag: false, adaptIframeHeight: true })
+    const sdkInstance = SDK.init(
+      tokenRes.token,
+      async () => {
+        const refresh = await getSumsubAccessToken(applicationId);
+        return refresh.token;
+      }
+    )
+      .withConf({
+        lang: "en",
+        theme: "light",
+      })
+      .withOptions({
+        addViewportTag: false,
+        adaptIframeHeight: true,
+      })
       .on("idCheck.onReady", () => console.log("Sumsub ready"))
       .on("idCheck.onError", (e) => console.error("Sumsub error", e))
+      .on("idCheck.onMessage", (type, payload) => console.log("Sumsub message:", type, payload))
       .build();
 
-    sdkInstance.launch("#sumsub-websdk-container");
-    showToast("Opened Sumsub KYC", "success");
+    try {
+      sdkInstance.launch(containerEl); // <-- IMPORTANT
+      showToast("Opened Sumsub KYC", "success");
+    } catch (e) {
+      console.error("Sumsub launch failed:", e);
+      showToast("Sumsub launch failed. Check console logs.", "error");
+    }
   }
 
   function closeSumsub() {
@@ -912,12 +980,21 @@ export default function App() {
       <SumsubModal open={sdkOpen} applicationId={sdkAppId} onClose={closeSumsub} />
 
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            alignItems: "center",
+            marginBottom: 14,
+          }}
+        >
           <div>
             <h1 style={{ margin: 0 }}>PolicyFlow AI</h1>
             <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13, marginTop: 4 }}>
-              KYC-to-Revenue Automation Engine (POC) • SDK:{" "}
-              <b>{sdkReady ? "READY" : "NOT READY"}</b>
+              KYC-to-Revenue Automation Engine (POC) • SDK: <b>{sdkReady ? "READY" : "NOT READY"}</b>
             </div>
           </div>
 
@@ -949,6 +1026,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* Tabs */}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, marginTop: 12 }}>
           <PillTab active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
             Dashboard
@@ -967,6 +1045,7 @@ export default function App() {
           </PillTab>
         </div>
 
+        {/* Content */}
         <div
           style={{
             background: "rgba(255,255,255,0.07)",

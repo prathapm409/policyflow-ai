@@ -20,7 +20,6 @@ function sleep(ms) {
 }
 
 function getSumsubSdk() {
-  // Your environment: window.snsWebSdk exists (not window.SNSWebSDK)
   return window.SNSWebSDK || window.snsWebSdk || null;
 }
 
@@ -54,7 +53,7 @@ function Toast({ toast, onClose }) {
         padding: "10px 12px",
         borderRadius: 14,
         boxShadow: "0 16px 50px rgba(0,0,0,0.35)",
-        maxWidth: 560,
+        maxWidth: 620,
         zIndex: 999999,
         display: "flex",
         gap: 10,
@@ -112,22 +111,30 @@ function PillTab({ active, children, onClick }) {
 }
 
 function renderKycProgress(status) {
+  const s = String(status || "").toUpperCase();
+
   const pct =
-    status === "PENDING_KYC"
+    s === "PENDING_KYC"
       ? 0
-      : status === "IN_PROGRESS"
+      : s === "IN_PROGRESS"
+      ? 40
+      : s === "PENDING"
       ? 50
-      : status === "APPROVED"
+      : s === "REVIEW"
+      ? 75
+      : s === "APPROVED"
       ? 100
-      : status === "REJECTED"
+      : s === "REJECTED"
       ? 100
       : 0;
 
   const color =
-    status === "APPROVED"
+    s === "APPROVED"
       ? "rgba(34,197,94,0.95)"
-      : status === "REJECTED"
+      : s === "REJECTED"
       ? "rgba(239,68,68,0.95)"
+      : s === "REVIEW"
+      ? "rgba(245,158,11,0.95)"
       : "rgba(37,99,235,0.95)";
 
   return (
@@ -143,8 +150,40 @@ function renderKycProgress(status) {
       >
         <div style={{ width: `${pct}%`, height: 10, background: color }} />
       </div>
-      <div style={{ fontSize: 12, marginTop: 6, color: "rgba(234,240,255,0.75)" }}>{pct}%</div>
+      <div style={{ fontSize: 12, marginTop: 6, color: "rgba(234,240,255,0.75)" }}>
+        {pct}%
+      </div>
     </div>
+  );
+}
+
+function riskBadgeColor(tier) {
+  const t = String(tier || "").toUpperCase();
+  if (t === "LOW") return "rgba(34,197,94,0.95)";
+  if (t === "MEDIUM") return "rgba(245,158,11,0.95)";
+  if (t === "HIGH") return "rgba(249,115,22,0.95)";
+  if (t === "CRITICAL") return "rgba(239,68,68,0.95)";
+  return "rgba(148,163,184,0.9)";
+}
+
+function RiskBadge({ tier, score }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        gap: 8,
+        alignItems: "center",
+        padding: "6px 10px",
+        borderRadius: 999,
+        background: riskBadgeColor(tier),
+        color: "white",
+        fontWeight: 800,
+        fontSize: 12,
+      }}
+    >
+      <span>{tier || "-"}</span>
+      {score !== undefined && score !== null ? <span>({score})</span> : null}
+    </span>
   );
 }
 
@@ -203,9 +242,9 @@ function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
   return (
     <>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
-        <StatCard title="Customers" value={summary.counts.customers} hint="Approved KYC users" />
-        <StatCard title="Contracts" value={summary.counts.contracts} hint="Generated policies" />
-        <StatCard title="Audit Logs" value={summary.counts.audits} hint="Latest compliance entries" />
+        <StatCard title="Customers" value={summary.counts.customers} hint="Approved / created customers" />
+        <StatCard title="Contracts" value={summary.counts.contracts} hint="Issued policies" />
+        <StatCard title="Audit Logs" value={summary.counts.audits} hint="Compliance events" />
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -241,7 +280,7 @@ function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
           <tr>
             <th>Name</th>
             <th>Email</th>
-            <th>Risk Tier</th>
+            <th>Risk</th>
           </tr>
         </thead>
         <tbody>
@@ -249,7 +288,9 @@ function DashboardPage({ summary, busy, setBusy, showToast, refreshAll }) {
             <tr key={c.id}>
               <td>{c.full_name}</td>
               <td>{c.email}</td>
-              <td>{c.risk_tier}</td>
+              <td>
+                <RiskBadge tier={c.risk_tier} score={c.risk_score} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -362,7 +403,10 @@ function ApplicationsPage({
               <th>Email</th>
               <th>KYC Status</th>
               <th>Progress</th>
-              <th>Risk Tier</th>
+              <th>Risk</th>
+              <th>Decision</th>
+              <th>Compliance</th>
+              <th>Policy</th>
               <th>Monitoring</th>
               <th>Applicant ID</th>
               <th>Actions</th>
@@ -382,7 +426,12 @@ function ApplicationsPage({
                   <td>{a.email}</td>
                   <td>{a.kyc_status}</td>
                   <td>{renderKycProgress(a.kyc_status)}</td>
-                  <td>{a.risk_tier || "-"}</td>
+                  <td>
+                    <RiskBadge tier={a.risk_tier} score={a.risk_score} />
+                  </td>
+                  <td>{a.decision_status || "-"}</td>
+                  <td>{a.compliance_status || "-"}</td>
+                  <td>{a.policy_status || "-"}</td>
                   <td>{a.monitoring_frequency || "-"}</td>
 
                   <td style={{ fontFamily: "monospace" }}>
@@ -461,12 +510,18 @@ function ApplicationsPage({
                                   status: "approved",
                                   fullName: a.full_name,
                                   email: a.email,
-                                  pep: false,
-                                  amlScore: 42,
+                                  pepMatch: false,
+                                  sanctionsMatch: false,
+                                  adverseMedia: false,
+                                  documentFraudDetected: false,
+                                  faceMismatch: false,
+                                  highRiskCountry: false,
+                                  deviceOrIpMismatch: false,
+                                  manualReviewRequired: false,
                                 });
                                 await loadApplications();
                                 await refreshAll();
-                                showToast("Set status: APPROVED", "success");
+                                showToast("Set status: APPROVED (LOW risk demo)", "success");
                               } catch (e) {
                                 console.error(e);
                                 showToast("Set APPROVED failed", "error");
@@ -476,6 +531,42 @@ function ApplicationsPage({
                             }}
                           >
                             Set Approved
+                          </button>
+
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            type="button"
+                            onClick={async () => {
+                              if (busy) return;
+                              setBusy(true);
+                              try {
+                                await sendSumsubWebhook({
+                                  applicantId,
+                                  status: "review",
+                                  fullName: a.full_name,
+                                  email: a.email,
+                                  pepMatch: true,
+                                  sanctionsMatch: false,
+                                  adverseMedia: false,
+                                  documentFraudDetected: false,
+                                  faceMismatch: false,
+                                  highRiskCountry: false,
+                                  deviceOrIpMismatch: false,
+                                  manualReviewRequired: true,
+                                });
+                                await loadApplications();
+                                await refreshAll();
+                                showToast("Set status: REVIEW", "success");
+                              } catch (e) {
+                                console.error(e);
+                                showToast("Set REVIEW failed", "error");
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                          >
+                            Set Review
                           </button>
 
                           <button
@@ -491,9 +582,14 @@ function ApplicationsPage({
                                   status: "rejected",
                                   fullName: a.full_name,
                                   email: a.email,
-                                  pep: false,
-                                  amlScore: 42,
-                                  reason: "DOCUMENT_MISMATCH",
+                                  pepMatch: false,
+                                  sanctionsMatch: true,
+                                  adverseMedia: false,
+                                  documentFraudDetected: false,
+                                  faceMismatch: false,
+                                  highRiskCountry: false,
+                                  deviceOrIpMismatch: false,
+                                  manualReviewRequired: true,
                                 });
                                 await loadApplications();
                                 await refreshAll();
@@ -520,7 +616,7 @@ function ApplicationsPage({
 
             {apps.length === 0 ? (
               <tr>
-                <td colSpan="10" style={{ textAlign: "center", padding: 12 }}>
+                <td colSpan="13" style={{ textAlign: "center", padding: 12 }}>
                   No applications yet
                 </td>
               </tr>
@@ -557,7 +653,6 @@ function AuditLogsPage({ showToast }) {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [offset]);
 
   const canPrev = offset > 0;
@@ -570,7 +665,7 @@ function AuditLogsPage({ showToast }) {
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input
-            placeholder="Search event type (e.g., KYC_REJECTED)"
+            placeholder="Search event type"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             style={{ minWidth: 320 }}
@@ -590,8 +685,7 @@ function AuditLogsPage({ showToast }) {
       </div>
 
       <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13, margin: "8px 0 12px" }}>
-        Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of{" "}
-        {page.total}
+        Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of {page.total}
       </div>
 
       <table>
@@ -675,7 +769,6 @@ function CustomersPage({ showToast }) {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [offset]);
 
   const canPrev = offset > 0;
@@ -686,8 +779,7 @@ function CustomersPage({ showToast }) {
       <h2 style={{ marginTop: 0 }}>Customers</h2>
 
       <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13, margin: "8px 0 12px" }}>
-        Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of{" "}
-        {page.total}
+        Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of {page.total}
       </div>
 
       <table>
@@ -696,7 +788,7 @@ function CustomersPage({ showToast }) {
             <th style={{ width: 70 }}>ID</th>
             <th>Name</th>
             <th>Email</th>
-            <th style={{ width: 130 }}>Risk Tier</th>
+            <th style={{ width: 160 }}>Risk</th>
             <th style={{ width: 230 }}>Created</th>
           </tr>
         </thead>
@@ -706,7 +798,9 @@ function CustomersPage({ showToast }) {
               <td>{c.id}</td>
               <td>{c.full_name}</td>
               <td>{c.email}</td>
-              <td>{c.risk_tier}</td>
+              <td>
+                <RiskBadge tier={c.risk_tier} score={c.risk_score} />
+              </td>
               <td>{new Date(c.created_at).toLocaleString()}</td>
             </tr>
           ))}
@@ -766,7 +860,6 @@ function ContractsPage({ showToast }) {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [offset]);
 
   const canPrev = offset > 0;
@@ -777,8 +870,7 @@ function ContractsPage({ showToast }) {
       <h2 style={{ marginTop: 0 }}>Contracts</h2>
 
       <div style={{ color: "rgba(234,240,255,0.75)", fontSize: 13, margin: "8px 0 12px" }}>
-        Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of{" "}
-        {page.total}
+        Showing {Math.min(page.total, offset + 1)}–{Math.min(page.total, offset + limit)} of {page.total}
       </div>
 
       <table>
@@ -850,13 +942,9 @@ export default function App() {
   const [apps, setApps] = useState([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
-
   const [tab, setTab] = useState("dashboard");
-
-  // Sumsub modal
   const [sdkOpen, setSdkOpen] = useState(false);
   const [sdkAppId, setSdkAppId] = useState(null);
-
   const [sdkReady, setSdkReady] = useState(Boolean(getSumsubSdk()));
 
   function showToast(message, type = "info") {
@@ -896,7 +984,6 @@ export default function App() {
 
   const appCount = useMemo(() => apps.length, [apps.length]);
 
-  /** ✅ FIXED: launch(containerEl) */
   async function openSumsub(applicationId) {
     const ok = await waitForSumsubSdk({ timeoutMs: 8000, stepMs: 200 });
     setSdkReady(ok);
@@ -907,7 +994,6 @@ export default function App() {
       return;
     }
 
-    // Ensure applicant exists (ignore 409)
     try {
       await createSumsubApplicant(applicationId);
     } catch {}
@@ -921,7 +1007,6 @@ export default function App() {
     setSdkAppId(applicationId);
     setSdkOpen(true);
 
-    // Wait a tick so modal DOM exists
     await sleep(0);
 
     const containerEl = document.getElementById("sumsub-websdk-container");
@@ -957,7 +1042,7 @@ export default function App() {
       .build();
 
     try {
-      sdkInstance.launch(containerEl); // <-- IMPORTANT
+      sdkInstance.launch(containerEl);
       showToast("Opened Sumsub KYC", "success");
     } catch (e) {
       console.error("Sumsub launch failed:", e);
@@ -980,7 +1065,6 @@ export default function App() {
       <SumsubModal open={sdkOpen} applicationId={sdkAppId} onClose={closeSumsub} />
 
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: 18 }}>
-        {/* Header */}
         <div
           style={{
             display: "flex",
@@ -1026,7 +1110,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tabs */}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, marginTop: 12 }}>
           <PillTab active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
             Dashboard
@@ -1045,7 +1128,6 @@ export default function App() {
           </PillTab>
         </div>
 
-        {/* Content */}
         <div
           style={{
             background: "rgba(255,255,255,0.07)",

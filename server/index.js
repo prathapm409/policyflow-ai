@@ -6,7 +6,12 @@ const https = require("https");
 const { v4: uuid } = require("uuid");
 const { stringify } = require("csv-stringify/sync");
 const pool = require("./db");
-const { assignRiskTier, monitoringFrequency } = require("./rules");
+const {
+  calculateRiskScore,
+  assignRiskTierFromScore,
+  determineKycDecision,
+  monitoringFrequencyForTier,
+} = require("./rules");
 const { generateContractPDF } = require("./pdf");
 const { requireEnv, signSumsubRequest } = require("./sumsub");
 const { verifySumsubWebhook } = require("./sumsubWebhook");
@@ -19,7 +24,7 @@ app.use(cors());
 app.use("/api/webhook/sumsub/real", express.raw({ type: "*/*" }));
 app.use(express.json());
 
-// Debug endpoint: verify Azure env is applied (remove later if you want)
+// Debug endpoint
 app.get("/api/debug/env", (req, res) => {
   res.json({
     ok: true,
@@ -29,11 +34,26 @@ app.get("/api/debug/env", (req, res) => {
 });
 
 async function handleSumsubWebhook(payload) {
-  const { applicantId, status, fullName, email, pep, amlScore } = payload;
+  const {
+    applicantId,
+    status,
+    fullName,
+    email,
+    pepMatch,
+    sanctionsMatch,
+    adverseMedia,
+    documentFraudDetected,
+    faceMismatch,
+    highRiskCountry,
+    deviceOrIpMismatch,
+    manualReviewRequired,
+  } = payload;
+
+  const verificationStatus = String(status || "pending").toUpperCase();
 
   await pool.query(
     "INSERT INTO webhooks (applicant_id, status, raw_payload) VALUES ($1,$2,$3)",
-    [applicantId, status, payload]
+    [applicantId, verificationStatus, payload]
   );
 
   await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
@@ -41,53 +61,196 @@ async function handleSumsubWebhook(payload) {
     payload,
   ]);
 
-  if (status !== "approved") {
-    const normalized = String(status || "unknown").toLowerCase();
+  const { score: riskScore, signals } = calculateRiskScore({
+    pepMatch,
+    sanctionsMatch,
+    adverseMedia,
+    documentFraudDetected,
+    faceMismatch,
+    highRiskCountry,
+    deviceOrIpMismatch,
+    manualReviewRequired,
+  });
 
-    await pool.query(
-      `UPDATE applications
-       SET kyc_status=$1, updated_at=NOW()
-       WHERE external_applicant_id=$2`,
-      [normalized.toUpperCase(), applicantId]
-    );
+  const riskTier = assignRiskTierFromScore(riskScore);
+  const decisionStatus = determineKycDecision({ verificationStatus, riskTier });
+  const monitoring = monitoringFrequencyForTier(riskTier);
 
-    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
-      normalized === "rejected" ? "KYC_REJECTED" : "KYC_STATUS_UPDATED",
-      payload,
-    ]);
-
-    return { ok: true, message: `No automation for status=${normalized}.` };
-  }
-
-  // Idempotency guard (existing logic)
   const appRes = await pool.query(
     "SELECT id, kyc_status, customer_id, contract_id FROM applications WHERE external_applicant_id=$1 LIMIT 1",
     [applicantId]
   );
 
-  if (appRes.rows.length > 0) {
-    const a = appRes.rows[0];
-    const alreadyApproved = String(a.kyc_status || "").toUpperCase() === "APPROVED";
-    const alreadyLinked = Boolean(a.customer_id) || Boolean(a.contract_id);
+  const application = appRes.rows[0] || null;
 
-    if (alreadyApproved && alreadyLinked) {
-      await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
-        "AUTOMATION_SKIPPED_ALREADY_PROCESSED",
-        { applicantId, applicationId: a.id },
-      ]);
-      return { ok: true, skipped: true, message: "Already processed for this application." };
-    }
+  if (application) {
+    await pool.query(
+      `UPDATE applications
+       SET kyc_status=$1,
+           risk_score=$2,
+           risk_tier=$3,
+           decision_status=$4,
+           monitoring_frequency=$5,
+           updated_at=NOW()
+       WHERE external_applicant_id=$6`,
+      [verificationStatus, riskScore, riskTier, decisionStatus, monitoring, applicantId]
+    );
   }
 
-  const riskTier = assignRiskTier({ pep, amlScore });
-  const monitoring = monitoringFrequency(riskTier);
+  await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+    "RISK_ASSESSED",
+    {
+      applicantId,
+      verificationStatus,
+      riskScore,
+      riskTier,
+      decisionStatus,
+      signals,
+    },
+  ]);
 
-  // Customer insert (or fetch existing if unique constraint exists)
+  // REJECTED
+  if (verificationStatus === "REJECTED") {
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "KYC_REJECTED",
+      { applicantId, verificationStatus, riskScore, riskTier, signals },
+    ]);
+
+    if (application) {
+      await pool.query(
+        `UPDATE applications
+         SET compliance_status='REJECTED',
+             policy_status='REJECTED',
+             updated_at=NOW()
+         WHERE id=$1`,
+        [application.id]
+      );
+    }
+
+    return {
+      ok: true,
+      applicantId,
+      verificationStatus,
+      riskScore,
+      riskTier,
+      decisionStatus,
+      message: "Application rejected from KYC review.",
+    };
+  }
+
+  // PENDING / REVIEW
+  if (verificationStatus === "PENDING" || verificationStatus === "REVIEW") {
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "KYC_PENDING_OR_REVIEW",
+      { applicantId, verificationStatus, riskScore, riskTier, signals },
+    ]);
+
+    if (application && verificationStatus === "REVIEW") {
+      await pool.query(
+        `INSERT INTO compliance_reviews (application_id, applicant_id, risk_score, risk_tier, status, reason)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [application.id, applicantId, riskScore, riskTier, "PENDING_REVIEW", "Manual review required"]
+      );
+
+      await pool.query(
+        `UPDATE applications
+         SET compliance_status='IN_REVIEW',
+             policy_status='ON_HOLD',
+             updated_at=NOW()
+         WHERE id=$1`,
+        [application.id]
+      );
+    }
+
+    return {
+      ok: true,
+      applicantId,
+      verificationStatus,
+      riskScore,
+      riskTier,
+      decisionStatus,
+      message: "No downstream automation yet.",
+    };
+  }
+
+  // APPROVED + CRITICAL
+  if (verificationStatus === "APPROVED" && riskTier === "CRITICAL") {
+    if (application) {
+      await pool.query(
+        `INSERT INTO compliance_reviews (application_id, applicant_id, risk_score, risk_tier, status, reason)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [application.id, applicantId, riskScore, riskTier, "ESCALATED", "Critical risk score"]
+      );
+
+      await pool.query(
+        `UPDATE applications
+         SET compliance_status='ESCALATED',
+             policy_status='REJECTED',
+             updated_at=NOW()
+         WHERE id=$1`,
+        [application.id]
+      );
+    }
+
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "CRITICAL_RISK_ESCALATED",
+      { applicantId, riskScore, riskTier, signals },
+    ]);
+
+    return {
+      ok: true,
+      applicantId,
+      verificationStatus,
+      riskScore,
+      riskTier,
+      decisionStatus,
+      message: "Critical risk detected. Rejected / escalated.",
+    };
+  }
+
+  // APPROVED + HIGH
+  if (verificationStatus === "APPROVED" && riskTier === "HIGH") {
+    if (application) {
+      await pool.query(
+        `INSERT INTO compliance_reviews (application_id, applicant_id, risk_score, risk_tier, status, reason)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [application.id, applicantId, riskScore, riskTier, "PENDING_REVIEW", "High-risk approved applicant"]
+      );
+
+      await pool.query(
+        `UPDATE applications
+         SET compliance_status='IN_REVIEW',
+             policy_status='ON_HOLD',
+             updated_at=NOW()
+         WHERE id=$1`,
+        [application.id]
+      );
+    }
+
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "HIGH_RISK_SENT_TO_COMPLIANCE",
+      { applicantId, riskScore, riskTier, signals },
+    ]);
+
+    return {
+      ok: true,
+      applicantId,
+      verificationStatus,
+      riskScore,
+      riskTier,
+      decisionStatus,
+      message: "High-risk case sent to compliance review. Policy issuance on hold.",
+    };
+  }
+
+  // APPROVED + LOW/MEDIUM => create customer
   let customer;
   try {
     const customerRes = await pool.query(
-      "INSERT INTO customers (external_id, full_name, email, risk_tier) VALUES ($1,$2,$3,$4) RETURNING *",
-      [applicantId, fullName, email, riskTier]
+      `INSERT INTO customers (external_id, full_name, email, risk_tier, risk_score)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING *`,
+      [applicantId, fullName, email, riskTier, riskScore]
     );
     customer = customerRes.rows[0];
   } catch (e) {
@@ -97,49 +260,109 @@ async function handleSumsubWebhook(payload) {
     customer = existing.rows[0];
   }
 
-  // If webhook isn't tied to an application, don't keep minting contracts
-  if (appRes.rows.length === 0 && customer) {
+  if (!application) {
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "AUTOMATION_SKIPPED_NO_APPLICATION_LINK",
-      { applicantId },
+      { applicantId, riskScore, riskTier },
     ]);
+
     return {
       ok: true,
       skipped: true,
-      message: "No linked application; skipping contract generation.",
+      applicantId,
+      verificationStatus,
+      riskScore,
+      riskTier,
+      decisionStatus,
+      message: "No linked application; customer created/fetched only.",
     };
   }
 
-  const contractRes = await pool.query(
-    "INSERT INTO contracts (customer_id, policy_number, status) VALUES ($1,$2,$3) RETURNING *",
-    [customer.id, `POL-${uuid().slice(0, 8).toUpperCase()}`, "Generated"]
-  );
+  // LOW => customer + policy + 12 months
+  if (riskTier === "LOW") {
+    const contractRes = await pool.query(
+      "INSERT INTO contracts (customer_id, policy_number, status) VALUES ($1,$2,$3) RETURNING *",
+      [customer.id, `POL-${uuid().slice(0, 8).toUpperCase()}`, "ISSUED"]
+    );
 
-  await pool.query("INSERT INTO monitoring (customer_id, frequency) VALUES ($1,$2)", [
-    customer.id,
-    monitoring,
-  ]);
+    await pool.query(
+      "INSERT INTO monitoring (customer_id, frequency) VALUES ($1,$2)",
+      [customer.id, "12_MONTHS"]
+    );
 
-  const result = { customer, contract: contractRes.rows[0], monitoring };
+    await pool.query(
+      `UPDATE applications
+       SET customer_id=$1,
+           contract_id=$2,
+           compliance_status='CLEARED',
+           policy_status='ISSUED',
+           updated_at=NOW()
+       WHERE id=$3`,
+      [customer.id, contractRes.rows[0].id, application.id]
+    );
 
-  await pool.query(
-    `UPDATE applications
-     SET kyc_status='APPROVED',
-         risk_tier=$1,
-         monitoring_frequency=$2,
-         customer_id=$3,
-         contract_id=$4,
-         updated_at=NOW()
-     WHERE external_applicant_id=$5`,
-    [riskTier, monitoring, customer.id, contractRes.rows[0].id, applicantId]
-  );
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "LOW_RISK_POLICY_ISSUED",
+      { applicantId, customer, contract: contractRes.rows[0], riskScore, riskTier },
+    ]);
 
-  await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
-    "AUTOMATION_EXECUTED",
-    result,
-  ]);
+    return {
+      ok: true,
+      applicantId,
+      verificationStatus,
+      riskScore,
+      riskTier,
+      decisionStatus,
+      customer,
+      contract: contractRes.rows[0],
+      monitoring: "12_MONTHS",
+    };
+  }
 
-  return { ok: true, ...result };
+  // MEDIUM => customer + monitoring only
+  if (riskTier === "MEDIUM") {
+    await pool.query(
+      "INSERT INTO monitoring (customer_id, frequency) VALUES ($1,$2)",
+      [customer.id, "6_MONTHS"]
+    );
+
+    await pool.query(
+      `UPDATE applications
+       SET customer_id=$1,
+           compliance_status='CLEARED',
+           policy_status='PENDING_POLICY',
+           updated_at=NOW()
+       WHERE id=$2`,
+      [customer.id, application.id]
+    );
+
+    await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
+      "MEDIUM_RISK_CUSTOMER_CREATED",
+      { applicantId, customer, riskScore, riskTier, monitoring: "6_MONTHS" },
+    ]);
+
+    return {
+      ok: true,
+      applicantId,
+      verificationStatus,
+      riskScore,
+      riskTier,
+      decisionStatus,
+      customer,
+      monitoring: "6_MONTHS",
+      message: "Medium-risk customer created with standard monitoring.",
+    };
+  }
+
+  return {
+    ok: true,
+    applicantId,
+    verificationStatus,
+    riskScore,
+    riskTier,
+    decisionStatus,
+    message: "Processed.",
+  };
 }
 
 /**
@@ -160,19 +383,16 @@ app.post("/api/webhook/sumsub", async (req, res) => {
  */
 app.post("/api/webhook/sumsub/real", async (req, res) => {
   try {
-    // 1) signature verify (or allow unsigned if env enabled)
     const sig = verifySumsubWebhook(req);
     if (!sig.ok) {
       return res.status(401).json({ ok: false, error: "Invalid webhook signature", details: sig });
     }
 
-    // 2) parse raw body
     const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
     if (!raw) return res.status(400).json({ ok: false, error: "Empty body" });
 
     const payload = JSON.parse(raw);
 
-    // 3) Extract metadata
     const type = payload.type || payload.eventType || payload.webhookType || "unknown";
     const applicantId =
       payload.applicantId || payload.applicant?.id || payload.applicant?.applicantId || null;
@@ -184,8 +404,6 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
       payload.externalId ||
       `${type}:${applicantId || "na"}:${payload.createdAt || Date.now()}`;
 
-    // 4) idempotency table insert (skip duplicates)
-    // NOTE: requires sumsub_webhook_events table to exist
     try {
       await pool.query(
         "INSERT INTO sumsub_webhook_events (event_id, applicant_id, event_type) VALUES ($1,$2,$3)",
@@ -195,27 +413,70 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
       return res.json({ ok: true, skipped: true, reason: "duplicate_event", eventId });
     }
 
-    // 5) Map review answer
     const reviewAnswer = payload.reviewResult?.reviewAnswer || payload.reviewResult?.reviewStatus;
-    const isGreen = String(reviewAnswer || "").toUpperCase() === "GREEN";
-    const isRed = String(reviewAnswer || "").toUpperCase() === "RED";
-    const status = isGreen ? "approved" : isRed ? "rejected" : "pending";
+    const rejectLabels = payload.reviewResult?.rejectLabels || [];
+    const typeLower = String(type || "").toLowerCase();
 
-    // Automate only on applicantReviewed
-    const shouldAutomate = String(type).toLowerCase() === "applicantreviewed";
+    let mappedStatus = "pending";
+    if (String(reviewAnswer || "").toUpperCase() === "GREEN") mappedStatus = "approved";
+    if (String(reviewAnswer || "").toUpperCase() === "RED") mappedStatus = "rejected";
+    if (typeLower.includes("pending")) mappedStatus = "pending";
+    if (typeLower.includes("review")) mappedStatus = "review";
+
+    const labelsText = Array.isArray(rejectLabels) ? rejectLabels.join(" ").toLowerCase() : "";
 
     const internalPayload = {
       applicantId,
-      status: shouldAutomate ? status : "pending",
+      status: mappedStatus,
       fullName: payload.externalUserId || payload.applicant?.info?.firstName || "Unknown",
       email: payload.applicant?.email || "unknown@example.com",
-      pep: false,
-      amlScore: 42,
+
+      pepMatch:
+        labelsText.includes("pep") ||
+        labelsText.includes("politically exposed") ||
+        Boolean(payload.pepMatch),
+
+      sanctionsMatch:
+        labelsText.includes("sanction") ||
+        labelsText.includes("watchlist") ||
+        Boolean(payload.sanctionsMatch),
+
+      adverseMedia:
+        labelsText.includes("adverse media") ||
+        Boolean(payload.adverseMedia),
+
+      documentFraudDetected:
+        labelsText.includes("tamper") ||
+        labelsText.includes("fraud") ||
+        labelsText.includes("forg") ||
+        Boolean(payload.documentFraudDetected),
+
+      faceMismatch:
+        labelsText.includes("face") ||
+        labelsText.includes("selfie") ||
+        Boolean(payload.faceMismatch),
+
+      highRiskCountry:
+        labelsText.includes("country risk") ||
+        labelsText.includes("high risk country") ||
+        Boolean(payload.highRiskCountry),
+
+      deviceOrIpMismatch:
+        labelsText.includes("device") ||
+        labelsText.includes("ip mismatch") ||
+        Boolean(payload.deviceOrIpMismatch),
+
+      manualReviewRequired:
+        mappedStatus === "review" ||
+        typeLower.includes("review") ||
+        Boolean(payload.manualReviewRequired),
+
       sumsubType: type,
       sumsubReviewAnswer: reviewAnswer,
+      sumsubRejectLabels: rejectLabels,
       sumsubEventId: eventId,
       rawSumsub: payload,
-      sumsubSig: sig, // for audit/debug
+      sumsubSig: sig,
     };
 
     const out = await handleSumsubWebhook(internalPayload);
@@ -237,7 +498,7 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
 });
 
 /**
- * Step 7B: Create Sumsub applicant (levelName=id-and-liveness)
+ * Create Sumsub applicant
  */
 app.post("/api/sumsub/applicant", async (req, res) => {
   try {
@@ -306,7 +567,7 @@ app.post("/api/sumsub/applicant", async (req, res) => {
 });
 
 /**
- * Step 7B: Create Sumsub WebSDK access token
+ * Create Sumsub WebSDK access token
  */
 app.post("/api/sumsub/access-token", async (req, res) => {
   try {
@@ -381,7 +642,7 @@ app.post("/api/sumsub/access-token", async (req, res) => {
 });
 
 /**
- * Demo trigger (POC)
+ * Demo trigger
  */
 app.post("/api/demo/trigger", async (req, res) => {
   try {
@@ -390,8 +651,14 @@ app.post("/api/demo/trigger", async (req, res) => {
       status: "approved",
       fullName: "Jane Carter",
       email: "jane.carter@example.com",
-      pep: false,
-      amlScore: 42,
+      pepMatch: false,
+      sanctionsMatch: false,
+      adverseMedia: false,
+      documentFraudDetected: false,
+      faceMismatch: false,
+      highRiskCountry: false,
+      deviceOrIpMismatch: false,
+      manualReviewRequired: false,
     };
     const out = await handleSumsubWebhook(sample);
     res.json(out);
@@ -425,7 +692,7 @@ app.post("/api/applications", async (req, res) => {
 app.get("/api/applications", async (req, res) => {
   try {
     const out = await pool.query(
-      `SELECT id, full_name, email, kyc_status, external_applicant_id, risk_tier, monitoring_frequency, created_at
+      `SELECT id, full_name, email, kyc_status, external_applicant_id, risk_score, risk_tier, decision_status, compliance_status, policy_status, monitoring_frequency, created_at
        FROM applications
        ORDER BY id DESC`
     );
@@ -472,7 +739,7 @@ app.get("/api/customers", async (req, res) => {
 
     const [dataRes, countRes] = await Promise.all([
       pool.query(
-        `SELECT id, external_id, full_name, email, risk_tier, created_at
+        `SELECT id, external_id, full_name, email, risk_tier, risk_score, created_at
          FROM customers
          ORDER BY id DESC
          LIMIT $1 OFFSET $2`,
@@ -550,7 +817,7 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
     const contract = contractRes.rows[0];
 
     const customerRes = await pool.query(
-      `SELECT id, full_name, email, risk_tier
+      `SELECT id, full_name, email, risk_tier, risk_score
        FROM customers
        WHERE id=$1`,
       [contract.customer_id]
@@ -573,27 +840,28 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
 });
 
 /**
- * Summary (Top 10 audits)
+ * Summary
  */
 app.get("/api/summary", async (req, res) => {
   try {
     const customers = await pool.query(
-      "SELECT id, full_name, email, risk_tier, created_at FROM customers ORDER BY id DESC LIMIT 5"
+      "SELECT id, full_name, email, risk_tier, risk_score, created_at FROM customers ORDER BY id DESC LIMIT 5"
     );
     const audits = await pool.query(
       "SELECT id, event_type, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 10"
     );
-    const contracts = await pool.query("SELECT id FROM contracts");
+    const counts = await pool.query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM customers) AS customers,
+        (SELECT COUNT(*)::int FROM contracts) AS contracts,
+        (SELECT COUNT(*)::int FROM audit_logs) AS audits
+    `);
 
     res.json({
       ok: true,
       customers: customers.rows,
       audits: audits.rows,
-      counts: {
-        customers: Number(customers.rowCount || 0),
-        audits: Number(audits.rowCount || 0),
-        contracts: Number(contracts.rowCount || 0),
-      },
+      counts: counts.rows[0],
     });
   } catch (e) {
     console.error("Summary error:", e);
@@ -602,7 +870,7 @@ app.get("/api/summary", async (req, res) => {
 });
 
 /**
- * Paginated audits (search by event_type)
+ * Paginated audits
  */
 app.get("/api/audits", async (req, res) => {
   try {

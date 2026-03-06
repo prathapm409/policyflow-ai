@@ -45,15 +45,19 @@ CREATE TABLE IF NOT EXISTS applications (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Ensure applications table has the columns used by server logic (safe for existing DBs)
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS external_applicant_id TEXT;
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS risk_tier TEXT;
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS monitoring_frequency TEXT;
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS customer_id INTEGER;
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS contract_id INTEGER;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS decision_status TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS compliance_status TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS policy_status TEXT;
 
--- Add FKs if possible (won't break if already exists)
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -73,16 +77,6 @@ BEGIN
   END IF;
 END $$;
 
--- Optional: prevent duplicate customers per applicant (recommended)
-CREATE UNIQUE INDEX IF NOT EXISTS customers_external_id_unique ON customers(external_id);
-
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS decision_status TEXT;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS compliance_status TEXT;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS policy_status TEXT;
-
-ALTER TABLE customers ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
-
 CREATE TABLE IF NOT EXISTS compliance_reviews (
   id SERIAL PRIMARY KEY,
   application_id INTEGER REFERENCES applications(id),
@@ -92,4 +86,12 @@ CREATE TABLE IF NOT EXISTS compliance_reviews (
   status TEXT NOT NULL DEFAULT 'PENDING_REVIEW',
   reason TEXT,
   created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS sumsub_webhook_events (
+  id SERIAL PRIMARY KEY,
+  event_id TEXT UNIQUE NOT NULL,
+  applicant_id TEXT,
+  event_type TEXT,
+  received_at TIMESTAMPTZ DEFAULT NOW()
 );

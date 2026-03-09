@@ -1,4 +1,4 @@
-// server/pdf.js - Promise-based PDF generator (replace existing)
+// server/pdf.js - Promise-based PDF generator
 const PDFDocument = require("pdfkit");
 
 function generateContractPDF({ customer, contract }) {

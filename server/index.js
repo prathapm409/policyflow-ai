@@ -1,4 +1,4 @@
-/* server/index.js - full updated file (replace your existing file) */
+// server/index.js
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -64,7 +64,7 @@ async function handleSumsubWebhook(payload) {
   ]);
 
   // 2) compute risk
-  const { score: riskScore, signals } = calculateRiskScore({
+  const { score: riskScore, flags } = calculateRiskScore({
     pepMatch,
     sanctionsMatch,
     adverseMedia,
@@ -109,7 +109,7 @@ async function handleSumsubWebhook(payload) {
       riskScore,
       riskTier,
       decisionStatus,
-      signals,
+      flags,
     },
   ]);
 
@@ -119,7 +119,7 @@ async function handleSumsubWebhook(payload) {
   if (verificationStatus === "REJECTED") {
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "KYC_REJECTED",
-      { applicantId, verificationStatus, riskScore, riskTier, signals },
+      { applicantId, verificationStatus, riskScore, riskTier, flags },
     ]);
 
     if (application) {
@@ -148,7 +148,7 @@ async function handleSumsubWebhook(payload) {
   if (verificationStatus === "PENDING" || verificationStatus === "REVIEW") {
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "KYC_PENDING_OR_REVIEW",
-      { applicantId, verificationStatus, riskScore, riskTier, signals },
+      { applicantId, verificationStatus, riskScore, riskTier, flags },
     ]);
 
     if (application && verificationStatus === "REVIEW") {
@@ -201,7 +201,7 @@ async function handleSumsubWebhook(payload) {
 
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "CRITICAL_RISK_ESCALATED",
-      { applicantId, riskScore, riskTier, signals },
+      { applicantId, riskScore, riskTier, flags },
     ]);
 
     return {
@@ -235,7 +235,7 @@ async function handleSumsubWebhook(payload) {
 
     await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
       "HIGH_RISK_SENT_TO_COMPLIANCE",
-      { applicantId, riskScore, riskTier, signals },
+      { applicantId, riskScore, riskTier, flags },
     ]);
 
     return {

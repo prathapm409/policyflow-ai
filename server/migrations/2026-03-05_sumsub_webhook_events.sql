@@ -1,4 +1,3 @@
--- create sumsub_webhook_events idempotently
 CREATE TABLE IF NOT EXISTS public.sumsub_webhook_events (
   id BIGSERIAL PRIMARY KEY,
   event_id TEXT UNIQUE NOT NULL,

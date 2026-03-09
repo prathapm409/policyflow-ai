@@ -11,4 +11,3 @@ CREATE INDEX IF NOT EXISTS idx_sumsub_webhook_events_applicant_id
 
 CREATE INDEX IF NOT EXISTS idx_sumsub_webhook_events_event_type
   ON public.sumsub_webhook_events(event_type);
-  

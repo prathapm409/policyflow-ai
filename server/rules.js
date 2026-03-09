@@ -45,7 +45,6 @@ function monitoringFrequencyForTier(tier) {
 }
 
 function determineKycDecision({ verificationStatus, riskTier }) {
-  // Basic mapping; extend as needed
   const status = String(verificationStatus || "").toUpperCase();
   if (status === "REJECTED") return "REJECTED";
   if (status === "PENDING") return "PENDING";

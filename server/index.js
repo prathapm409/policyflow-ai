@@ -16,6 +16,7 @@ const {
 const { generateContractPDF } = require("./pdf");
 const { requireEnv, signSumsubRequest } = require("./sumsub");
 const { verifySumsubWebhook } = require("./sumsubWebhook");
+const { detectDocumentFraud, detectFaceMismatch, detectSanctionsOrPep } = require("./sumsubHelpers");
 const path = require("path");
 
 const app = express();
@@ -53,10 +54,15 @@ async function handleSumsubWebhook(payload) {
   const verificationStatus = String(status || "pending").toUpperCase();
 
   // 1) log webhook to webhooks table + audit
-  await pool.query(
-    "INSERT INTO webhooks (applicant_id, status, raw_payload) VALUES ($1,$2,$3)",
-    [applicantId, verificationStatus, payload]
-  );
+  try {
+    await pool.query(
+      "INSERT INTO webhooks (applicant_id, status, raw_payload) VALUES ($1,$2,$3)",
+      [applicantId, verificationStatus, payload]
+    );
+  } catch (e) {
+    // ignore logging error but keep processing
+    console.error("Failed writing webhook log:", e.message || e);
+  }
 
   await pool.query("INSERT INTO audit_logs (event_type, payload) VALUES ($1,$2)", [
     "WEBHOOK_RECEIVED",
@@ -536,6 +542,36 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
       sumsubSig: sig,
     };
 
+    // Strict detection & enforcement using helpers
+    const fraudCheck = detectDocumentFraud(payload);
+    const faceCheck = detectFaceMismatch(payload);
+    const pepSanctions = detectSanctionsOrPep(payload);
+
+    // Merge detected flags into internalPayload for downstream scoring/decisions
+    internalPayload.documentFraudDetected = internalPayload.documentFraudDetected || fraudCheck.isFraud;
+    internalPayload.faceMismatch = internalPayload.faceMismatch || faceCheck.isMismatch;
+    internalPayload.pepMatch = internalPayload.pepMatch || pepSanctions.details.pep;
+    internalPayload.sanctionsMatch = internalPayload.sanctionsMatch || pepSanctions.details.sanctions;
+    internalPayload.sumsubRejectLabelsText = (internalPayload.sumsubRejectLabels || []).join?.(" ") || "";
+
+    // Enforce stricter decisions before calling handleSumsubWebhook
+    if (internalPayload.documentFraudDetected) {
+      internalPayload.status = "rejected";
+      internalPayload.sumsubNotes = (internalPayload.sumsubNotes || "") + " | Forced reject: document fraud detected";
+    }
+
+    if (internalPayload.faceMismatch) {
+      if (String(internalPayload.status || "").toLowerCase() === "approved") {
+        internalPayload.status = "review";
+        internalPayload.sumsubNotes = (internalPayload.sumsubNotes || "") + " | Forced review: face mismatch";
+      }
+    }
+
+    if (internalPayload.sanctionsMatch) {
+      internalPayload.status = "rejected";
+      internalPayload.sumsubNotes = (internalPayload.sumsubNotes || "") + " | Forced reject: sanctions/watchlist";
+    }
+
     const out = await handleSumsubWebhook(internalPayload);
 
     return res.json({
@@ -861,7 +897,9 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
     const id = Number(req.params.id);
 
     const contractRes = await pool.query(
-      `SELECT c.id, c.customer_id, c.policy_number, c.status, c.created_at
+      `SELECT c.id, c.customer_id, c.policy_number, c.status, c.created_at,
+              c.coverage_start, c.coverage_end, c.coverage_description, c.coverage_limit, c.deductible, c.premium, c.payment_frequency,
+              c.insurer, c.insurer_address, c.policyholder_address, c.dob, c.sumsub_verification_id, c.sumsub_status, c.sumsub_verified_at, c.monitoring_frequency
        FROM contracts c
        WHERE c.id=$1`,
       [id]
@@ -885,8 +923,10 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
     }
 
     const customer = customerRes.rows[0];
-    // generateContractPDF now returns a Promise (async)
-    const pdfBuffer = await generateContractPDF({ customer, contract });
+    const pdfBuffer = await generateContractPDF({
+      customer,
+      contract,
+    });
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="contract_${contract.policy_number}.pdf"`);

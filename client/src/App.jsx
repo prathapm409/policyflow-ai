@@ -505,7 +505,7 @@ function ApplicationsPage({
                               if (busy) return;
                               setBusy(true);
                               try {
-                                await sendSumsubWebhook({
+                                const out = await sendSumsubWebhook({
                                   applicantId,
                                   status: "approved",
                                   fullName: a.full_name,
@@ -519,9 +519,19 @@ function ApplicationsPage({
                                   deviceOrIpMismatch: false,
                                   manualReviewRequired: false,
                                 });
+
                                 await loadApplications();
                                 await refreshAll();
-                                showToast("Set status: APPROVED (LOW risk demo)", "success");
+
+                                // If the backend created a contract (LOW risk), open PDF in new tab
+                                if (out && out.contract && out.contract.id) {
+                                  const contractId = out.contract.id;
+                                  const pdfUrl = `/api/contracts/${contractId}/pdf`;
+                                  window.open(pdfUrl, "_blank");
+                                  showToast("Policy issued — opening contract PDF", "success");
+                                } else {
+                                  showToast("Set status: APPROVED (no contract created)", "success");
+                                }
                               } catch (e) {
                                 console.error(e);
                                 showToast("Set APPROVED failed", "error");
@@ -558,6 +568,8 @@ function ApplicationsPage({
                                 await loadApplications();
                                 await refreshAll();
                                 showToast("Set status: REVIEW", "success");
+                                // Optionally open compliance queue in new tab
+                                // window.open('/compliance', '_blank');
                               } catch (e) {
                                 console.error(e);
                                 showToast("Set REVIEW failed", "error");
@@ -706,9 +718,7 @@ function AuditLogsPage({ showToast }) {
               <td style={{ maxWidth: 680 }}>
                 <details>
                   <summary style={{ cursor: "pointer" }}>View</summary>
-                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
-                    {JSON.stringify(a.payload, null, 2)}
-                  </pre>
+                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>{JSON.stringify(a.payload, null, 2)}</pre>
                 </details>
               </td>
             </tr>
@@ -724,20 +734,10 @@ function AuditLogsPage({ showToast }) {
       </table>
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button
-          className="secondary"
-          type="button"
-          disabled={!canPrev || loading}
-          onClick={() => setOffset(Math.max(0, offset - limit))}
-        >
+        <button className="secondary" type="button" disabled={!canPrev || loading} onClick={() => setOffset(Math.max(0, offset - limit))}>
           Prev
         </button>
-        <button
-          className="secondary"
-          type="button"
-          disabled={!canNext || loading}
-          onClick={() => setOffset(offset + limit)}
-        >
+        <button className="secondary" type="button" disabled={!canNext || loading} onClick={() => setOffset(offset + limit)}>
           Next
         </button>
       </div>
@@ -815,20 +815,10 @@ function CustomersPage({ showToast }) {
       </table>
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button
-          className="secondary"
-          type="button"
-          disabled={!canPrev || loading}
-          onClick={() => setOffset(Math.max(0, offset - limit))}
-        >
+        <button className="secondary" type="button" disabled={!canPrev || loading} onClick={() => setOffset(Math.max(0, offset - limit))}>
           Prev
         </button>
-        <button
-          className="secondary"
-          type="button"
-          disabled={!canNext || loading}
-          onClick={() => setOffset(offset + limit)}
-        >
+        <button className="secondary" type="button" disabled={!canNext || loading} onClick={() => setOffset(offset + limit)}>
           Next
         </button>
       </div>
@@ -892,9 +882,7 @@ function ContractsPage({ showToast }) {
               <td>{c.status}</td>
               <td>
                 {c.customer_name}
-                <div style={{ color: "rgba(234,240,255,0.65)", fontSize: 12 }}>
-                  {c.customer_email}
-                </div>
+                <div style={{ color: "rgba(234,240,255,0.65)", fontSize: 12 }}>{c.customer_email}</div>
               </td>
               <td>{new Date(c.created_at).toLocaleString()}</td>
               <td>
@@ -915,20 +903,10 @@ function ContractsPage({ showToast }) {
       </table>
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button
-          className="secondary"
-          type="button"
-          disabled={!canPrev || loading}
-          onClick={() => setOffset(Math.max(0, offset - limit))}
-        >
+        <button className="secondary" type="button" disabled={!canPrev || loading} onClick={() => setOffset(Math.max(0, offset - limit))}>
           Prev
         </button>
-        <button
-          className="secondary"
-          type="button"
-          disabled={!canNext || loading}
-          onClick={() => setOffset(offset + limit)}
-        >
+        <button className="secondary" type="button" disabled={!canNext || loading} onClick={() => setOffset(offset + limit)}>
           Next
         </button>
       </div>
@@ -954,13 +932,22 @@ export default function App() {
   }
 
   async function loadSummary() {
-    const data = await getSummary();
-    setSummary(data);
+    try {
+      const data = await getSummary();
+      setSummary(data);
+    } catch (e) {
+      console.error("loadSummary error", e);
+      setSummary({ counts: { customers: 0, contracts: 0, audits: 0 }, customers: [], audits: [] });
+    }
   }
 
   async function loadApplications() {
-    const res = await listApplications();
-    if (res.ok) setApps(res.applications);
+    try {
+      const res = await listApplications();
+      if (res.ok) setApps(res.applications);
+    } catch (e) {
+      console.error("loadApplications error", e);
+    }
   }
 
   async function refreshAll() {

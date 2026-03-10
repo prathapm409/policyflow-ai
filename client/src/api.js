@@ -1,83 +1,88 @@
-// client/src/api.js
-// Single place for client -> server API calls used by the app.
-
-async function handleResponse(res) {
-  let body = null;
+async function jsonFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  let data = {};
   try {
-    body = await res.json();
-  } catch (e) {
-    /* ignore JSON parse error for non-JSON responses */
-  }
+    data = await res.json();
+  } catch {}
   if (!res.ok) {
-    const err = new Error(body?.error || body?.message || `HTTP ${res.status}`);
-    err.status = res.status;
-    err.body = body;
-    throw err;
+    return { ok: false, error: data.error || `Request failed: ${res.status}`, ...data };
   }
-  return body;
+  return data;
 }
 
-export async function getJson(path) {
-  const res = await fetch(path, { credentials: "same-origin" });
-  return handleResponse(res);
+export async function getSummary() {
+  return jsonFetch("/api/summary");
 }
 
-export async function postJson(path, data) {
-  const res = await fetch(path, {
+export async function triggerDemo() {
+  return jsonFetch("/api/demo/trigger", { method: "POST" });
+}
+
+export async function createApplication(payload) {
+  return jsonFetch("/api/applications", {
     method: "POST",
-    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data || {}),
+    body: JSON.stringify(payload),
   });
-  return handleResponse(res);
 }
 
-/* ---- Concrete endpoints used by App.jsx ---- */
+export async function listApplications() {
+  return jsonFetch("/api/applications");
+}
 
-export const getSummary = () => getJson("/api/summary");
+export async function startKyc(id) {
+  return jsonFetch(`/api/applications/${id}/start-kyc`, {
+    method: "POST",
+  });
+}
 
-/* triggerDemo: calls /api/demo/trigger (used by Dashboard button) */
-export const triggerDemo = () => postJson("/api/demo/trigger", {});
+export async function sendSumsubWebhook(payload) {
+  return jsonFetch("/api/webhook/sumsub", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
 
-/* Applications */
-export const createApplication = (payload) => postJson("/api/applications", payload);
-export const listApplications = () => getJson("/api/applications");
-export const startKyc = (id) => postJson(`/api/applications/${id}/start-kyc`, {});
+export async function listAudits({ limit = 25, offset = 0, q = "" } = {}) {
+  const qs = new URLSearchParams({ limit, offset, q });
+  return jsonFetch(`/api/audits?${qs.toString()}`);
+}
 
-/* Sumsub / webhook helpers */
-export const sendSumsubWebhook = (payload) => postJson("/api/webhook/sumsub", payload);
-export const createSumsubApplicant = (applicationId) => postJson("/api/sumsub/applicant", { applicationId });
-export const getSumsubAccessToken = (applicationId) => postJson("/api/sumsub/access-token", { applicationId });
+export async function listCustomers({ limit = 50, offset = 0 } = {}) {
+  const qs = new URLSearchParams({ limit, offset });
+  return jsonFetch(`/api/customers?${qs.toString()}`);
+}
 
-/* Audits, customers, contracts */
-export const listAudits = (opts = {}) => {
-  const q = opts.limit ? `?limit=${opts.limit}&offset=${opts.offset || 0}` : "";
-  return getJson(`/api/audits${q}`);
-};
-export const listCustomers = (opts = {}) => {
-  const q = opts.limit ? `?limit=${opts.limit}&offset=${opts.offset || 0}` : "";
-  return getJson(`/api/customers${q}`);
-};
-export const listContracts = (opts = {}) => {
-  const q = opts.limit ? `?limit=${opts.limit}&offset=${opts.offset || 0}` : "";
-  return getJson(`/api/contracts${q}`);
-};
-export const contractPdfUrl = (id) => `/api/contracts/${id}/pdf`;
+export async function listContracts({ limit = 50, offset = 0 } = {}) {
+  const qs = new URLSearchParams({ limit, offset });
+  return jsonFetch(`/api/contracts?${qs.toString()}`);
+}
 
-/* Small convenience wrappers */
-export default {
-  getJson,
-  postJson,
-  getSummary,
-  triggerDemo,
-  createApplication,
-  listApplications,
-  startKyc,
-  sendSumsubWebhook,
-  createSumsubApplicant,
-  getSumsubAccessToken,
-  listAudits,
-  listCustomers,
-  listContracts,
-  contractPdfUrl,
-};
+export async function listComplianceReviews() {
+  return jsonFetch("/api/compliance-reviews");
+}
+
+export async function listVerifiedResults() {
+  return jsonFetch("/api/verified-results");
+}
+
+export function contractPdfUrl(id) {
+  return `/api/contracts/${id}/pdf`;
+}
+
+export async function createSumsubApplicant(applicationId) {
+  return jsonFetch("/api/sumsub/applicant", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applicationId }),
+  });
+}
+
+export async function getSumsubAccessToken(applicationId) {
+  return jsonFetch("/api/sumsub/access-token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applicationId }),
+  });
+}

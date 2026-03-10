@@ -35,6 +35,11 @@ app.get("/api/debug/env", (req, res) => {
   });
 });
 
+/**
+ * handleSumsubWebhook(payload)
+ * - payload is the normalized internal payload handed to the automation.
+ * - returns an object describing actions taken; when a contract is created it returns the created contract row.
+ */
 async function handleSumsubWebhook(payload) {
   const {
     applicantId,
@@ -49,18 +54,28 @@ async function handleSumsubWebhook(payload) {
     highRiskCountry,
     deviceOrIpMismatch,
     manualReviewRequired,
+    sumsubEventId,
+    // optional contract-related overrides (from seed/test payloads)
+    coverage_description,
+    coverage_limit,
+    deductible,
+    premium,
+    payment_frequency,
+    insurer,
+    insurer_address,
+    policyholder_address,
+    dob,
   } = payload;
 
   const verificationStatus = String(status || "pending").toUpperCase();
 
-  // 1) log webhook to webhooks table + audit
+  // 1) log webhook to webhooks table + audit (best-effort)
   try {
     await pool.query(
       "INSERT INTO webhooks (applicant_id, status, raw_payload) VALUES ($1,$2,$3)",
       [applicantId, verificationStatus, payload]
     );
   } catch (e) {
-    // ignore logging error but keep processing
     console.error("Failed writing webhook log:", e.message || e);
   }
 
@@ -276,8 +291,8 @@ async function handleSumsubWebhook(payload) {
     `;
     const custRes = await client.query(upsertCustomerSql, [
       applicantId,
-      fullName,
-      email,
+      fullName || "Unknown",
+      email || "unknown@example.com",
       riskTier,
       riskScore,
     ]);
@@ -296,14 +311,46 @@ async function handleSumsubWebhook(payload) {
       );
     }
 
-    // LOW -> create contract + monitoring
+    // LOW -> create contract + monitoring (create full contract fields used by PDF)
     if (riskTier === "LOW") {
-      const contractRes = await client.query(
-        `INSERT INTO contracts (customer_id, policy_number, status, created_at)
-         VALUES ($1, $2, $3, NOW())
-         RETURNING *`,
-        [customer.id, `POL-${uuid().slice(0, 8).toUpperCase()}`, "ISSUED"]
-      );
+      const policyNumber = `POL-${uuid().slice(0, 8).toUpperCase()}`;
+      const coverageStart = new Date().toISOString();
+      const coverageEnd = new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString();
+
+      const insertContractSql = `
+        INSERT INTO contracts (
+          customer_id, policy_number, status, created_at,
+          coverage_start, coverage_end, coverage_description, coverage_limit,
+          deductible, premium, payment_frequency, insurer, insurer_address,
+          policyholder_address, dob, sumsub_verification_id, sumsub_status, sumsub_verified_at,
+          monitoring_frequency
+        ) VALUES (
+          $1,$2,$3,NOW(),
+          $4,$5,$6,$7,
+          $8,$9,$10,$11,$12,
+          $13,$14,$15,$16,$17,$18
+        ) RETURNING *;
+      `;
+      const contractRes = await client.query(insertContractSql, [
+        customer.id,
+        policyNumber,
+        "ISSUED",
+        coverageStart,
+        coverageEnd,
+        coverage_description || "Comprehensive coverage for private motor vehicle including accidental damage, theft, and third-party liability.",
+        coverage_limit || "£50,000",
+        deductible || "£500",
+        premium || "£820",
+        payment_frequency || "Monthly",
+        insurer || "Northern Shield Insurance Ltd",
+        insurer_address || "42 Bishopsgate, London, UK",
+        policyholder_address || null,
+        dob || null,
+        sumsubEventId || null,
+        "Approved",
+        new Date().toISOString(),
+        monitoring || null,
+      ]);
       createdContract = contractRes.rows[0];
 
       await client.query(
@@ -448,6 +495,7 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
   try {
     const sig = verifySumsubWebhook(req);
     if (!sig.ok) {
+      console.warn("Webhook signature verification failed:", sig);
       return res.status(401).json({ ok: false, error: "Invalid webhook signature", details: sig });
     }
 
@@ -473,6 +521,7 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
         [String(eventId), applicantId ? String(applicantId) : null, String(type)]
       );
     } catch (e) {
+      // duplicate event -> skip processing
       return res.json({ ok: true, skipped: true, reason: "duplicate_event", eventId });
     }
 
@@ -534,12 +583,24 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
         typeLower.includes("review") ||
         Boolean(payload.manualReviewRequired),
 
+      // Pass event id for traceability and for use when inserting contract
+      sumsubEventId: eventId,
+
+      // optional: allow downstream contract fields override if present in payload (for tests)
+      coverage_description: payload.coverage_description,
+      coverage_limit: payload.coverage_limit,
+      deductible: payload.deductible,
+      premium: payload.premium,
+      payment_frequency: payload.payment_frequency,
+      insurer: payload.insurer,
+      insurer_address: payload.insurer_address,
+      policyholder_address: payload.policyholder_address,
+      dob: payload.dob,
+
       sumsubType: type,
       sumsubReviewAnswer: reviewAnswer,
       sumsubRejectLabels: rejectLabels,
-      sumsubEventId: eventId,
       rawSumsub: payload,
-      sumsubSig: sig,
     };
 
     // Strict detection & enforcement using helpers
@@ -552,7 +613,6 @@ app.post("/api/webhook/sumsub/real", async (req, res) => {
     internalPayload.faceMismatch = internalPayload.faceMismatch || faceCheck.isMismatch;
     internalPayload.pepMatch = internalPayload.pepMatch || pepSanctions.details.pep;
     internalPayload.sanctionsMatch = internalPayload.sanctionsMatch || pepSanctions.details.sanctions;
-    internalPayload.sumsubRejectLabelsText = (internalPayload.sumsubRejectLabels || []).join?.(" ") || "";
 
     // Enforce stricter decisions before calling handleSumsubWebhook
     if (internalPayload.documentFraudDetected) {

@@ -1,19 +1,14 @@
 // server/pdf.js
-// Promise-based PDF generator that renders an Insurance Policy Agreement
+// PDF generator that renders an Insurance Policy Agreement (two pages like screenshot)
 const PDFDocument = require("pdfkit");
 
-/**
- * generateContractPDF({ customer = {}, contract = {} })
- */
 function generateContractPDF({ customer = {}, contract = {} }) {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ size: "A4", margin: 48 });
       const chunks = [];
       doc.on("data", (c) => chunks.push(c));
-      doc.on("end", () => {
-        try { resolve(Buffer.concat(chunks)); } catch (e) { reject(e); }
-      });
+      doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", (err) => reject(err));
 
       const formatDate = (d) => {
@@ -27,15 +22,14 @@ function generateContractPDF({ customer = {}, contract = {} }) {
       doc.fontSize(20).font("Helvetica-Bold").text("Insurance Policy Agreement", { align: "center" });
       doc.moveDown(1.2);
 
-      // Top info two-column
-      const leftColX = doc.page.margins.left;
-      const rightColX = 260;
+      // Two-column area
+      const leftX = doc.page.margins.left;
+      const rightX = 260;
       let y = doc.y;
       const rowGap = 18;
-
       const writeRow = (label, value) => {
-        doc.font("Helvetica").fontSize(11).text(label, leftColX, y);
-        doc.font("Helvetica").fontSize(11).text(value, rightColX, y);
+        doc.font("Helvetica").fontSize(11).text(label, leftX, y);
+        doc.font("Helvetica").fontSize(11).text(value, rightX, y);
         y += rowGap;
       };
 

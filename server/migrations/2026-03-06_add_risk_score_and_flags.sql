@@ -11,4 +11,3 @@ ALTER TABLE applications
   ADD COLUMN IF NOT EXISTS policy_status TEXT;
 
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
-

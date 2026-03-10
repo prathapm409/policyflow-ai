@@ -14,11 +14,15 @@ const {
 const { generateContractPDF } = require("./pdf");
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
 function mapDbError(error) {
-  return { ok: false, error: error.message || "Server error" };
+  return {
+    ok: false,
+    error: error?.message || "Server error",
+  };
 }
 
 async function safeQuery(sql, params = []) {
@@ -28,6 +32,27 @@ async function safeQuery(sql, params = []) {
     console.error("DB error:", e);
     throw e;
   }
+}
+
+function normalizeVerificationStatus(input) {
+  const value = String(input || "").trim().toUpperCase();
+  if (["APPROVED", "REJECTED", "PENDING", "REVIEW"].includes(value)) return value;
+  if (value === "GREEN") return "APPROVED";
+  if (value === "RED") return "REJECTED";
+  return "PENDING";
+}
+
+function buildSignalPayload(payload = {}) {
+  return {
+    pepMatch: Boolean(payload.pepMatch),
+    sanctionsMatch: Boolean(payload.sanctionsMatch),
+    adverseMedia: Boolean(payload.adverseMedia),
+    documentFraudDetected: Boolean(payload.documentFraudDetected),
+    faceMismatch: Boolean(payload.faceMismatch),
+    highRiskCountry: Boolean(payload.highRiskCountry),
+    deviceOrIpMismatch: Boolean(payload.deviceOrIpMismatch),
+    manualReviewRequired: Boolean(payload.manualReviewRequired),
+  };
 }
 
 app.get("/api/debug/env", async (req, res) => {
@@ -40,22 +65,34 @@ app.get("/api/debug/env", async (req, res) => {
 
 app.get("/api/summary", async (req, res) => {
   try {
-    const customers = await safeQuery(
-      "SELECT * FROM customers ORDER BY created_at DESC LIMIT 10"
-    );
-    const audits = await safeQuery(
-      "SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 10"
-    );
-    const contracts = await safeQuery(
-      "SELECT * FROM contracts ORDER BY created_at DESC LIMIT 10"
-    );
-
     const counts = await safeQuery(`
       SELECT
+        (SELECT COUNT(*) FROM applications) AS applications,
         (SELECT COUNT(*) FROM customers) AS customers,
         (SELECT COUNT(*) FROM contracts) AS contracts,
-        (SELECT COUNT(*) FROM audit_logs) AS audits,
-        (SELECT COUNT(*) FROM applications) AS applications
+        (SELECT COUNT(*) FROM audit_logs) AS audits
+    `);
+
+    const customers = await safeQuery(`
+      SELECT *
+      FROM customers
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+
+    const audits = await safeQuery(`
+      SELECT *
+      FROM audit_logs
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+
+    const contracts = await safeQuery(`
+      SELECT c.*, cu.full_name, cu.email, cu.risk_tier
+      FROM contracts c
+      LEFT JOIN customers cu ON cu.id = c.customer_id
+      ORDER BY c.created_at DESC
+      LIMIT 10
     `);
 
     res.json({
@@ -99,17 +136,20 @@ app.get("/api/applications", async (req, res) => {
       applications: result.rows || [],
     });
   } catch (e) {
-    console.error("Applications list error:", e);
+    console.error("Applications error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
 
 app.post("/api/applications", async (req, res) => {
   try {
-    const { fullName, email } = req.body;
+    const { fullName, email } = req.body || {};
 
     if (!fullName || !email) {
-      return res.status(400).json({ ok: false, error: "fullName and email are required" });
+      return res.status(400).json({
+        ok: false,
+        error: "fullName and email are required",
+      });
     }
 
     const result = await safeQuery(
@@ -132,7 +172,7 @@ app.post("/api/applications", async (req, res) => {
     );
 
     await safeQuery(
-      "INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)",
+      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
       [
         "APPLICATION_CREATED",
         {
@@ -157,19 +197,20 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
   try {
     const id = Number(req.params.id);
 
-    const existing = await safeQuery("SELECT * FROM applications WHERE id = $1", [id]);
-    if (existing.rows.length === 0) {
+    const existing = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [id]);
+    if (!existing.rows.length) {
       return res.status(404).json({ ok: false, error: "Application not found" });
     }
 
-    const externalApplicantId = `SUMSUB-${uuid().slice(0, 8)}`;
+    const externalApplicantId = `SUM-${uuid().slice(0, 8).toUpperCase()}`;
 
     const updated = await safeQuery(
       `
       UPDATE applications
-      SET kyc_status = 'IN_PROGRESS',
-          external_applicant_id = $2,
-          updated_at = NOW()
+      SET
+        kyc_status = 'IN_PROGRESS',
+        external_applicant_id = $2,
+        updated_at = NOW()
       WHERE id = $1
       RETURNING *
       `,
@@ -177,7 +218,7 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
     );
 
     await safeQuery(
-      "INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)",
+      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
       [
         "KYC_STARTED",
         {
@@ -200,25 +241,24 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
 app.post("/api/webhook/sumsub", async (req, res) => {
   try {
     const payload = req.body || {};
+    const applicantId =
+      payload.applicantId ||
+      payload.externalApplicantId ||
+      payload.applicant_id ||
+      null;
 
-    const applicantId = payload.applicantId || payload.externalApplicantId || payload.applicant_id;
-    const statusRaw = payload.status || payload.reviewStatus || "approved";
-    const verificationStatus = String(statusRaw).toUpperCase();
+    if (!applicantId) {
+      return res.status(400).json({ ok: false, error: "applicantId is required" });
+    }
 
-    const signalsInput = {
-      pepMatch: Boolean(payload.pepMatch),
-      sanctionsMatch: Boolean(payload.sanctionsMatch),
-      adverseMedia: Boolean(payload.adverseMedia),
-      documentFraudDetected: Boolean(payload.documentFraudDetected),
-      faceMismatch: Boolean(payload.faceMismatch),
-      highRiskCountry: Boolean(payload.highRiskCountry),
-      deviceOrIpMismatch: Boolean(payload.deviceOrIpMismatch),
-      manualReviewRequired: Boolean(payload.manualReviewRequired),
-    };
+    const verificationStatus = normalizeVerificationStatus(
+      payload.status || payload.reviewStatus || payload.verificationStatus
+    );
 
-    const { score, reasons } = calculateRiskScore(signalsInput);
+    const signals = buildSignalPayload(payload);
+    const { score, reasons } = calculateRiskScore(signals);
     const riskTier = assignRiskTierFromScore(score);
-    const decision = determineKycDecision({
+    const decisionStatus = determineKycDecision({
       verificationStatus,
       riskTier,
     });
@@ -235,8 +275,11 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       [applicantId]
     );
 
-    if (appRes.rows.length === 0) {
-      return res.status(404).json({ ok: false, error: "Application not found for applicantId" });
+    if (!appRes.rows.length) {
+      return res.status(404).json({
+        ok: false,
+        error: "Application not found for applicantId",
+      });
     }
 
     const application = appRes.rows[0];
@@ -251,15 +294,21 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         complianceStatus = "NOT_REQUIRED";
         policyStatus = "GENERATED";
       } else if (riskTier === "MEDIUM") {
-        complianceStatus = "REVIEW_REQUIRED";
-        policyStatus = "PENDING_REVIEW";
-      } else {
+        complianceStatus = "NOT_REQUIRED";
+        policyStatus = "MONITORING_ONLY";
+      } else if (riskTier === "HIGH") {
         complianceStatus = "IN_REVIEW";
         policyStatus = "ON_HOLD";
+      } else if (riskTier === "CRITICAL") {
+        complianceStatus = "ESCALATED";
+        policyStatus = "REJECTED";
       }
     } else if (verificationStatus === "REJECTED") {
       complianceStatus = "REJECTED";
-      policyStatus = "DECLINED";
+      policyStatus = "REJECTED";
+    } else if (verificationStatus === "REVIEW") {
+      complianceStatus = "IN_REVIEW";
+      policyStatus = "ON_HOLD";
     } else {
       complianceStatus = "PENDING";
       policyStatus = "PENDING";
@@ -285,7 +334,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         verificationStatus,
         score,
         riskTier,
-        decision,
+        decisionStatus,
         complianceStatus,
         policyStatus,
         monitoringFrequency,
@@ -293,22 +342,36 @@ app.post("/api/webhook/sumsub", async (req, res) => {
     );
 
     if (verificationStatus === "APPROVED" && (riskTier === "LOW" || riskTier === "MEDIUM")) {
-      const customerRes = await safeQuery(
+      const existingCustomer = await safeQuery(
         `
-        INSERT INTO customers (external_id, full_name, email, risk_tier, risk_score)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING *
+        SELECT *
+        FROM customers
+        WHERE external_id = $1
+        ORDER BY id DESC
+        LIMIT 1
         `,
-        [
-          applicantId,
-          application.full_name,
-          application.email,
-          riskTier,
-          score,
-        ]
+        [applicantId]
       );
 
-      customer = customerRes.rows[0];
+      if (existingCustomer.rows.length) {
+        customer = existingCustomer.rows[0];
+      } else {
+        const customerRes = await safeQuery(
+          `
+          INSERT INTO customers (external_id, full_name, email, risk_tier, risk_score)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING *
+          `,
+          [
+            applicantId,
+            application.full_name,
+            application.email,
+            riskTier,
+            score,
+          ]
+        );
+        customer = customerRes.rows[0];
+      }
 
       await safeQuery(
         `
@@ -320,20 +383,34 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       );
 
       if (riskTier === "LOW") {
-        const contractRes = await safeQuery(
+        const existingContract = await safeQuery(
           `
-          INSERT INTO contracts (customer_id, policy_number, status)
-          VALUES ($1, $2, $3)
-          RETURNING *
+          SELECT *
+          FROM contracts
+          WHERE customer_id = $1
+          ORDER BY id DESC
+          LIMIT 1
           `,
-          [
-            customer.id,
-            `POL-UK-${new Date().getFullYear()}-${String(customer.id).padStart(6, "0")}`,
-            "Generated",
-          ]
+          [customer.id]
         );
 
-        contract = contractRes.rows[0];
+        if (existingContract.rows.length) {
+          contract = existingContract.rows[0];
+        } else {
+          const contractRes = await safeQuery(
+            `
+            INSERT INTO contracts (customer_id, policy_number, status)
+            VALUES ($1, $2, $3)
+            RETURNING *
+            `,
+            [
+              customer.id,
+              `POL-UK-${new Date().getFullYear()}-${String(customer.id).padStart(6, "0")}`,
+              "Generated",
+            ]
+          );
+          contract = contractRes.rows[0];
+        }
 
         await safeQuery(
           `
@@ -346,17 +423,35 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       }
 
       if (monitoringFrequency) {
-        await safeQuery(
+        const monitoringCheck = await safeQuery(
           `
-          INSERT INTO monitoring (customer_id, frequency)
-          VALUES ($1, $2)
+          SELECT *
+          FROM monitoring
+          WHERE customer_id = $1
+          ORDER BY id DESC
+          LIMIT 1
           `,
-          [customer.id, monitoringFrequency]
+          [customer.id]
         );
+
+        if (!monitoringCheck.rows.length) {
+          await safeQuery(
+            `
+            INSERT INTO monitoring (customer_id, frequency)
+            VALUES ($1, $2)
+            `,
+            [customer.id, monitoringFrequency]
+          );
+        }
       }
     }
 
-    if (riskTier === "HIGH" || riskTier === "CRITICAL" || complianceStatus === "REVIEW_REQUIRED" || complianceStatus === "IN_REVIEW") {
+    if (
+      riskTier === "MEDIUM" ||
+      riskTier === "HIGH" ||
+      riskTier === "CRITICAL" ||
+      verificationStatus === "REVIEW"
+    ) {
       await safeQuery(
         `
         INSERT INTO compliance_reviews (
@@ -381,17 +476,18 @@ app.post("/api/webhook/sumsub", async (req, res) => {
     }
 
     await safeQuery(
-      "INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)",
+      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
       [
         "SUMSUB_WEBHOOK_PROCESSED",
         {
           applicationId: application.id,
           applicantId,
           verificationStatus,
+          signals,
           score,
           riskTier,
-          decision,
           reasons,
+          decisionStatus,
         },
       ]
     );
@@ -401,75 +497,27 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       application: updatedApp.rows[0],
       customer,
       contract,
+      score,
+      riskTier,
       reasons,
+      signals,
     });
   } catch (e) {
-    console.error("Webhook processing error:", e);
-    res.status(500).json(mapDbError(e));
-  }
-});
-
-app.post("/api/demo/trigger", async (req, res) => {
-  try {
-    const fullName = "James Carter";
-    const email = `james.carter.${Date.now()}@example.com`;
-
-    const appCreate = await safeQuery(
-      `
-      INSERT INTO applications (
-        full_name,
-        email,
-        kyc_status,
-        risk_score,
-        risk_tier,
-        decision_status,
-        compliance_status,
-        policy_status,
-        updated_at
-      )
-      VALUES ($1, $2, 'PENDING_KYC', 0, 'LOW', 'PENDING', 'NOT_REQUIRED', 'NOT_STARTED', NOW())
-      RETURNING *
-      `,
-      [fullName, email]
-    );
-
-    const createdApp = appCreate.rows[0];
-    const applicantId = `SUMSUB-${uuid().slice(0, 8)}`;
-
-    await safeQuery(
-      `
-      UPDATE applications
-      SET external_applicant_id = $2, kyc_status = 'IN_PROGRESS', updated_at = NOW()
-      WHERE id = $1
-      `,
-      [createdApp.id, applicantId]
-    );
-
-    req.body = {
-      applicantId,
-      status: "approved",
-      pepMatch: false,
-      sanctionsMatch: false,
-      adverseMedia: false,
-      documentFraudDetected: false,
-      faceMismatch: false,
-      highRiskCountry: false,
-      deviceOrIpMismatch: false,
-      manualReviewRequired: false,
-    };
-
-    app._router.handle(req, res, () => {});
-  } catch (e) {
-    console.error("Demo trigger error:", e);
+    console.error("Sumsub webhook error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
 
 app.get("/api/customers", async (req, res) => {
   try {
-    const result = await safeQuery("SELECT * FROM customers ORDER BY created_at DESC");
+    const result = await safeQuery(`
+      SELECT *
+      FROM customers
+      ORDER BY created_at DESC
+    `);
     res.json({ ok: true, customers: result.rows || [] });
   } catch (e) {
+    console.error("Customers error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -488,6 +536,7 @@ app.get("/api/contracts", async (req, res) => {
     `);
     res.json({ ok: true, contracts: result.rows || [] });
   } catch (e) {
+    console.error("Contracts error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -501,6 +550,7 @@ app.get("/api/compliance-reviews", async (req, res) => {
     `);
     res.json({ ok: true, reviews: result.rows || [] });
   } catch (e) {
+    console.error("Compliance reviews error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -510,11 +560,13 @@ app.get("/api/verified-results", async (req, res) => {
     const result = await safeQuery(`
       SELECT *
       FROM applications
-      WHERE kyc_status IN ('APPROVED', 'REVIEW', 'REJECTED')
+      WHERE kyc_status IN ('APPROVED', 'REJECTED', 'PENDING', 'REVIEW')
+         OR decision_status IN ('AUTO_APPROVED', 'STANDARD_MONITORING', 'MANUAL_REVIEW', 'REJECT_ESCALATE')
       ORDER BY updated_at DESC NULLS LAST, id DESC
     `);
     res.json({ ok: true, results: result.rows || [] });
   } catch (e) {
+    console.error("Verified results error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -529,6 +581,7 @@ app.get("/api/audits", async (req, res) => {
     `);
     res.json({ ok: true, audits: result.rows || [] });
   } catch (e) {
+    console.error("Audits error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -536,18 +589,26 @@ app.get("/api/audits", async (req, res) => {
 app.get("/api/contracts/:id/pdf", async (req, res) => {
   try {
     const contractRes = await safeQuery(
-      "SELECT * FROM contracts WHERE id = $1",
+      `
+      SELECT *
+      FROM contracts
+      WHERE id = $1
+      `,
       [req.params.id]
     );
 
-    if (contractRes.rows.length === 0) {
+    if (!contractRes.rows.length) {
       return res.status(404).json({ ok: false, error: "Contract not found" });
     }
 
     const contract = contractRes.rows[0];
 
     const customerRes = await safeQuery(
-      "SELECT * FROM customers WHERE id = $1",
+      `
+      SELECT *
+      FROM customers
+      WHERE id = $1
+      `,
       [contract.customer_id]
     );
 
@@ -568,7 +629,7 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
       application = appRes.rows[0] || null;
     }
 
-    const pdf = generateContractPDF({
+    const pdfBuffer = generateContractPDF({
       customer,
       contract,
       application,
@@ -579,21 +640,28 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
       "Content-Disposition",
       `inline; filename="${contract.policy_number}.pdf"`
     );
-    res.send(pdf);
+    res.send(pdfBuffer);
   } catch (e) {
-    console.error("PDF error:", e);
+    console.error("Contract PDF error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
 
 app.get("/api/audit/export", async (req, res) => {
   try {
-    const logs = await safeQuery("SELECT * FROM audit_logs ORDER BY created_at DESC");
-    const csv = stringify(logs.rows, { header: true });
+    const logs = await safeQuery(`
+      SELECT *
+      FROM audit_logs
+      ORDER BY created_at DESC
+    `);
+
+    const csv = stringify(logs.rows || [], { header: true });
+
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=audit_export.csv");
     res.send(csv);
   } catch (e) {
+    console.error("Audit export error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -607,5 +675,5 @@ app.get("*", (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ PolicyFlow AI running on port ${PORT}`);
+  console.log(`PolicyFlow AI server running on port ${PORT}`);
 });

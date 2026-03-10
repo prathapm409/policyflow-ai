@@ -1,9 +1,5 @@
 // scripts/send_signed_webhook.js
-// Run multiple test scenarios (LOW, MEDIUM, HIGH, CRITICAL) against local or deployed endpoint.
-// Usage:
-//   $env:SUMSUB_SECRET_KEY="your_secret_here"
-//   node scripts/send_signed_webhook.js http://localhost:3000/api/webhook/sumsub/real
-
+// Test script that signs payloads and posts to real endpoint. Use SUMSUB_SECRET_KEY env var.
 const crypto = require("crypto");
 const axios = require("axios");
 
@@ -16,7 +12,7 @@ const scenarios = [
       applicantId: "TEST-LOW-1",
       createdAt: new Date().toISOString(),
       reviewResult: { reviewStatus: "GREEN" },
-      applicant: { email: "low@example.com", info: { firstName: "Low" } },
+      applicant: { email: "low@example.com", info: { firstName: "James Carter" } },
     },
   },
   {

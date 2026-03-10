@@ -1,22 +1,31 @@
+// server/sumsub.js
+// Helpers for Sumsub API signing (used when creating applicants/access tokens) and requireEnv.
+
 const crypto = require("crypto");
 
-function requireEnv(name) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env var: ${name}`);
+function requireEnv(key) {
+  const v = process.env[key];
+  if (!v) throw new Error(`Missing env var ${key}`);
   return v;
 }
 
 /**
- * Sumsub signature:
- * HMAC_SHA256(secret, ts + method + pathWithQuery + body)
- * IMPORTANT: body must be EXACT string used for request.
- * For requests with empty JSON body, use "{}" (not "").
+ * Sign Sumsub API requests (X-App-Access-Sig) per their API:
+ * Signature = HMAC_SHA256(secret, timestamp + '.' + method + '.' + path + '.' + bodyHash)
+ * where bodyHash is SHA256(body) hex (empty string => '').
+ *
+ * This function returns the signature string to set in header X-App-Access-Sig
  */
-function signSumsubRequest({ ts, method, path, body }) {
-  const secret = requireEnv("SUMSUB_SECRET_KEY");
-  const normalizedBody = body === undefined || body === null ? "" : body;
-  const prehash = `${ts}${method.toUpperCase()}${path}${normalizedBody}`;
-  return crypto.createHmac("sha256", secret).update(prehash).digest("hex");
+function signSumsubRequest({ ts, method, path, body, secret }) {
+  // ts: integer timestamp seconds
+  // method: GET/POST etc
+  // path: request path + query
+  // body: raw string
+  secret = secret || process.env.SUMSUB_APP_SECRET || ""; // replace if needed
+  const bodyHash = crypto.createHash("sha256").update(body || "", "utf8").digest("hex");
+  const payload = `${ts}.${method}.${path}.${bodyHash}`;
+  const sig = crypto.createHmac("sha256", String(secret)).update(payload, "utf8").digest("hex");
+  return sig;
 }
 
 module.exports = { requireEnv, signSumsubRequest };

@@ -1,41 +1,13 @@
--- Create a sample customer + contract with fields that match the screenshot
--- Idempotent: will upsert by external_id / policy_number
-
--- 1) Upsert customer
+-- Seed sample customer + contract that matches screenshot (idempotent)
 INSERT INTO customers (external_id, full_name, email, risk_tier, risk_score, created_at)
 VALUES ('TEST-LOW-1', 'James Carter', 'james.carter@example.com', 'MEDIUM', 45, NOW())
 ON CONFLICT (external_id) DO UPDATE
   SET full_name = EXCLUDED.full_name,
       email = EXCLUDED.email,
       risk_tier = EXCLUDED.risk_tier,
-      risk_score = EXCLUDED.risk_score
-RETURNING id INTO TEMP customer_row;
+      risk_score = EXCLUDED.risk_score;
 
--- If your DB doesn't support RETURNING ... INTO in this context, run the SELECT below to find the customer id.
--- 2) Insert contract linked to customer (use SELECT to get customer id)
--- Replace (SELECT id FROM customers WHERE external_id='TEST-LOW-1' LIMIT 1) if needed.
-
-INSERT INTO contracts (
-  customer_id,
-  policy_number,
-  status,
-  created_at,
-  coverage_start,
-  coverage_end,
-  coverage_description,
-  coverage_limit,
-  deductible,
-  premium,
-  payment_frequency,
-  insurer,
-  insurer_address,
-  policyholder_address,
-  dob,
-  sumsub_verification_id,
-  sumsub_status,
-  sumsub_verified_at,
-  monitoring_frequency
-)
+INSERT INTO contracts (customer_id, policy_number, status, created_at, coverage_start, coverage_end, coverage_description, coverage_limit, deductible, premium, payment_frequency, insurer, insurer_address, policyholder_address, dob, sumsub_verification_id, sumsub_status, sumsub_verified_at, monitoring_frequency)
 VALUES (
   (SELECT id FROM customers WHERE external_id='TEST-LOW-1' LIMIT 1),
   'POL-UK-2026-000384',
@@ -74,4 +46,3 @@ ON CONFLICT (policy_number) DO UPDATE
       sumsub_status = EXCLUDED.sumsub_status,
       sumsub_verified_at = EXCLUDED.sumsub_verified_at,
       monitoring_frequency = EXCLUDED.monitoring_frequency;
-      

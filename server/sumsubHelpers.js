@@ -1,6 +1,4 @@
 // server/sumsubHelpers.js
-// Helper functions to detect fraud / face mismatch / sanctions/pep from Sumsub payload
-
 function getLabelsText(payload) {
   const labels = payload?.reviewResult?.rejectLabels || payload?.sumsubRejectLabels || [];
   return Array.isArray(labels) ? labels.join(" ").toLowerCase() : String(labels || "").toLowerCase();

@@ -1,3 +1,4 @@
+// server/sumsubWebhook.js
 const crypto = require("crypto");
 const { requireEnv } = require("./sumsub");
 
@@ -26,7 +27,10 @@ function verifySumsubWebhook(req) {
   const allowUnsigned =
     String(process.env.SUMSUB_WEBHOOK_ALLOW_UNSIGNED || "false").toLowerCase() === "true";
 
-  const secret = requireEnv("SUMSUB_SECRET_KEY");
+  const secret = (() => {
+    try { return requireEnv("SUMSUB_SECRET_KEY"); } catch (e) { return ""; }
+  })();
+
   const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from("", "utf8");
 
   const digestCandidates = [
@@ -93,6 +97,13 @@ function verifySumsubWebhook(req) {
   }
 
   // 2) verify signature (HMAC-SHA256 of digestHeader using secret)
+  if (!secret) {
+    if (allowUnsigned) {
+      return { ok: true, skippedVerification: true, warning: "No SUMSUB_SECRET_KEY configured; allowed by SUMSUB_WEBHOOK_ALLOW_UNSIGNED" };
+    }
+    return { ok: false, reason: "No server secret configured (SUMSUB_SECRET_KEY)" };
+  }
+
   const expectedSig = crypto.createHmac("sha256", secret).update(digestHeader.value).digest("hex");
   if (expectedSig !== signatureHeader.value) {
     return {

@@ -12,16 +12,17 @@ const {
   monitoringFrequencyForTier,
 } = require("./rules");
 const { generateContractPDF } = require("./pdf");
+const { sumsubRequest } = require("./sumsub");
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
 function mapDbError(error) {
   return {
     ok: false,
-    error: error?.message || "Server error",
+    error: error?.response?.data?.description || error?.message || "Server error",
+    details: error?.response?.data || null,
   };
 }
 
@@ -60,6 +61,8 @@ app.get("/api/debug/env", async (req, res) => {
     ok: true,
     nodeEnv: process.env.NODE_ENV || "development",
     hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+    hasSumsubAppToken: Boolean(process.env.SUMSUB_APP_TOKEN),
+    hasSumsubSecretKey: Boolean(process.env.SUMSUB_SECRET_KEY),
   });
 });
 
@@ -103,7 +106,6 @@ app.get("/api/summary", async (req, res) => {
       contracts: contracts.rows || [],
     });
   } catch (e) {
-    console.error("Summary error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -136,7 +138,6 @@ app.get("/api/applications", async (req, res) => {
       applications: result.rows || [],
     });
   } catch (e) {
-    console.error("Applications error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -173,22 +174,122 @@ app.post("/api/applications", async (req, res) => {
 
     await safeQuery(
       `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
-      [
-        "APPLICATION_CREATED",
-        {
-          applicationId: result.rows[0].id,
-          fullName,
-          email,
+      ["APPLICATION_CREATED", { applicationId: result.rows[0].id, fullName, email }]
+    );
+
+    res.json({ ok: true, application: result.rows[0] });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.post("/api/sumsub/applicant", async (req, res) => {
+  try {
+    const { applicationId } = req.body || {};
+    if (!applicationId) {
+      return res.status(400).json({ ok: false, error: "applicationId is required" });
+    }
+
+    const appRes = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [applicationId]);
+    if (!appRes.rows.length) {
+      return res.status(404).json({ ok: false, error: "Application not found" });
+    }
+
+    const application = appRes.rows[0];
+    if (application.external_applicant_id) {
+      return res.json({
+        ok: true,
+        applicantId: application.external_applicant_id,
+        application,
+      });
+    }
+
+    const externalUserId = `policyflow-${application.id}-${uuid()}`;
+
+    const applicant = await sumsubRequest({
+      method: "POST",
+      path: "/resources/applicants?levelName=basic-kyc-level",
+      body: {
+        externalUserId,
+        email: application.email,
+        fixedInfo: {
+          firstName: application.full_name,
         },
-      ]
+      },
+    });
+
+    const applicantId = applicant?.id;
+    if (!applicantId) {
+      return res.status(500).json({ ok: false, error: "Failed to create Sumsub applicant" });
+    }
+
+    const updated = await safeQuery(
+      `
+      UPDATE applications
+      SET external_applicant_id = $2, updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+      `,
+      [applicationId, applicantId]
+    );
+
+    await safeQuery(
+      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
+      ["SUMSUB_APPLICANT_CREATED", { applicationId, applicantId }]
     );
 
     res.json({
       ok: true,
-      application: result.rows[0],
+      applicantId,
+      application: updated.rows[0],
     });
   } catch (e) {
-    console.error("Create application error:", e);
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.post("/api/sumsub/access-token", async (req, res) => {
+  try {
+    const { applicationId } = req.body || {};
+    if (!applicationId) {
+      return res.status(400).json({ ok: false, error: "applicationId is required" });
+    }
+
+    const appRes = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [applicationId]);
+    if (!appRes.rows.length) {
+      return res.status(404).json({ ok: false, error: "Application not found" });
+    }
+
+    const application = appRes.rows[0];
+
+    let applicantId = application.external_applicant_id;
+    if (!applicantId) {
+      return res.status(400).json({
+        ok: false,
+        error: "No Sumsub applicant exists. Create applicant first.",
+      });
+    }
+
+    const tokenData = await sumsubRequest({
+      method: "POST",
+      path: "/resources/accessTokens/sdk",
+      body: {
+        userId: String(application.id),
+        applicantIdentifiers: {
+          email: application.email,
+        },
+        ttlInSecs: 1800,
+        levelName: "basic-kyc-level",
+      },
+    });
+
+    res.json({
+      ok: true,
+      applicantId,
+      token: tokenData?.token,
+      userId: tokenData?.userId,
+    });
+  } catch (e) {
     res.status(500).json(mapDbError(e));
   }
 });
@@ -202,20 +303,67 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
       return res.status(404).json({ ok: false, error: "Application not found" });
     }
 
-    const externalApplicantId = `SUM-${uuid().slice(0, 8).toUpperCase()}`;
+    let application = existing.rows[0];
 
-    const updated = await safeQuery(
-      `
-      UPDATE applications
-      SET
-        kyc_status = 'IN_PROGRESS',
-        external_applicant_id = $2,
-        updated_at = NOW()
-      WHERE id = $1
-      RETURNING *
-      `,
-      [id, externalApplicantId]
-    );
+    if (!application.external_applicant_id) {
+      const externalUserId = `policyflow-${application.id}-${uuid()}`;
+      const applicant = await sumsubRequest({
+        method: "POST",
+        path: "/resources/applicants?levelName=basic-kyc-level",
+        body: {
+          externalUserId,
+          email: application.email,
+          fixedInfo: {
+            firstName: application.full_name,
+          },
+        },
+      });
+
+      const applicantId = applicant?.id;
+      if (!applicantId) {
+        return res.status(500).json({ ok: false, error: "Failed to create Sumsub applicant" });
+      }
+
+      const updatedApplicant = await safeQuery(
+        `
+        UPDATE applications
+        SET
+          external_applicant_id = $2,
+          kyc_status = 'IN_PROGRESS',
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        `,
+        [id, applicantId]
+      );
+      application = updatedApplicant.rows[0];
+    } else {
+      const updatedApplicant = await safeQuery(
+        `
+        UPDATE applications
+        SET
+          kyc_status = 'IN_PROGRESS',
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        `,
+        [id]
+      );
+      application = updatedApplicant.rows[0];
+    }
+
+    const tokenData = await sumsubRequest({
+      method: "POST",
+      path: "/resources/accessTokens/sdk",
+      body: {
+        userId: String(application.id),
+        applicantIdentifiers: {
+          email: application.email,
+        },
+        ttlInSecs: 1800,
+        levelName: "basic-kyc-level",
+      },
+    });
 
     await safeQuery(
       `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
@@ -223,17 +371,19 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
         "KYC_STARTED",
         {
           applicationId: id,
-          externalApplicantId,
+          externalApplicantId: application.external_applicant_id,
         },
       ]
     );
 
     res.json({
       ok: true,
-      application: updated.rows[0],
+      application,
+      applicantId: application.external_applicant_id,
+      sumsubToken: tokenData?.token || null,
+      userId: tokenData?.userId || String(application.id),
     });
   } catch (e) {
-    console.error("Start KYC error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -242,10 +392,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
   try {
     const payload = req.body || {};
     const applicantId =
-      payload.applicantId ||
-      payload.externalApplicantId ||
-      payload.applicant_id ||
-      null;
+      payload.applicantId || payload.externalApplicantId || payload.applicant_id || null;
 
     if (!applicantId) {
       return res.status(400).json({ ok: false, error: "applicantId is required" });
@@ -343,13 +490,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
 
     if (verificationStatus === "APPROVED" && (riskTier === "LOW" || riskTier === "MEDIUM")) {
       const existingCustomer = await safeQuery(
-        `
-        SELECT *
-        FROM customers
-        WHERE external_id = $1
-        ORDER BY id DESC
-        LIMIT 1
-        `,
+        `SELECT * FROM customers WHERE external_id = $1 ORDER BY id DESC LIMIT 1`,
         [applicantId]
       );
 
@@ -362,35 +503,19 @@ app.post("/api/webhook/sumsub", async (req, res) => {
           VALUES ($1, $2, $3, $4, $5)
           RETURNING *
           `,
-          [
-            applicantId,
-            application.full_name,
-            application.email,
-            riskTier,
-            score,
-          ]
+          [applicantId, application.full_name, application.email, riskTier, score]
         );
         customer = customerRes.rows[0];
       }
 
       await safeQuery(
-        `
-        UPDATE applications
-        SET customer_id = $2
-        WHERE id = $1
-        `,
+        `UPDATE applications SET customer_id = $2 WHERE id = $1`,
         [application.id, customer.id]
       );
 
       if (riskTier === "LOW") {
         const existingContract = await safeQuery(
-          `
-          SELECT *
-          FROM contracts
-          WHERE customer_id = $1
-          ORDER BY id DESC
-          LIMIT 1
-          `,
+          `SELECT * FROM contracts WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
           [customer.id]
         );
 
@@ -399,47 +524,70 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         } else {
           const contractRes = await safeQuery(
             `
-            INSERT INTO contracts (customer_id, policy_number, status)
-            VALUES ($1, $2, $3)
+            INSERT INTO contracts (
+              customer_id,
+              policy_number,
+              status,
+              coverage_start,
+              coverage_end,
+              coverage_description,
+              coverage_limit,
+              deductible,
+              premium,
+              payment_frequency,
+              insurer,
+              insurer_address,
+              policyholder_address,
+              dob,
+              sumsub_verification_id,
+              sumsub_status,
+              sumsub_verified_at,
+              monitoring_frequency
+            )
+            VALUES (
+              $1, $2, $3,
+              NOW(),
+              NOW() + INTERVAL '1 year',
+              $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15
+            )
             RETURNING *
             `,
             [
               customer.id,
               `POL-UK-${new Date().getFullYear()}-${String(customer.id).padStart(6, "0")}`,
               "Generated",
+              "Comprehensive coverage for private motor vehicle including accidental damage, theft, and third-party liability.",
+              "£50,000",
+              "£500",
+              "£820",
+              "Monthly",
+              "Northern Shield Insurance Ltd",
+              "42 Bishopsgate, London, UK",
+              "14 Kingsway Avenue, Manchester, UK",
+              "1985-07-21",
+              applicantId,
+              verificationStatus,
+              monitoringFrequency || "12_MONTHS",
             ]
           );
           contract = contractRes.rows[0];
         }
 
         await safeQuery(
-          `
-          UPDATE applications
-          SET contract_id = $2
-          WHERE id = $1
-          `,
+          `UPDATE applications SET contract_id = $2 WHERE id = $1`,
           [application.id, contract.id]
         );
       }
 
       if (monitoringFrequency) {
         const monitoringCheck = await safeQuery(
-          `
-          SELECT *
-          FROM monitoring
-          WHERE customer_id = $1
-          ORDER BY id DESC
-          LIMIT 1
-          `,
+          `SELECT * FROM monitoring WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
           [customer.id]
         );
 
         if (!monitoringCheck.rows.length) {
           await safeQuery(
-            `
-            INSERT INTO monitoring (customer_id, frequency)
-            VALUES ($1, $2)
-            `,
+            `INSERT INTO monitoring (customer_id, frequency) VALUES ($1, $2)`,
             [customer.id, monitoringFrequency]
           );
         }
@@ -464,14 +612,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         )
         VALUES ($1, $2, $3, $4, $5, $6)
         `,
-        [
-          application.id,
-          applicantId,
-          score,
-          riskTier,
-          "PENDING_REVIEW",
-          reasons.join("; "),
-        ]
+        [application.id, applicantId, score, riskTier, "PENDING_REVIEW", reasons.join("; ")]
       );
     }
 
@@ -503,21 +644,15 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       signals,
     });
   } catch (e) {
-    console.error("Sumsub webhook error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
 
 app.get("/api/customers", async (req, res) => {
   try {
-    const result = await safeQuery(`
-      SELECT *
-      FROM customers
-      ORDER BY created_at DESC
-    `);
+    const result = await safeQuery(`SELECT * FROM customers ORDER BY created_at DESC`);
     res.json({ ok: true, customers: result.rows || [] });
   } catch (e) {
-    console.error("Customers error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -525,32 +660,22 @@ app.get("/api/customers", async (req, res) => {
 app.get("/api/contracts", async (req, res) => {
   try {
     const result = await safeQuery(`
-      SELECT
-        c.*,
-        cu.full_name,
-        cu.email,
-        cu.risk_tier
+      SELECT c.*, cu.full_name, cu.email, cu.risk_tier
       FROM contracts c
       LEFT JOIN customers cu ON cu.id = c.customer_id
       ORDER BY c.created_at DESC
     `);
     res.json({ ok: true, contracts: result.rows || [] });
   } catch (e) {
-    console.error("Contracts error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
 
 app.get("/api/compliance-reviews", async (req, res) => {
   try {
-    const result = await safeQuery(`
-      SELECT *
-      FROM compliance_reviews
-      ORDER BY created_at DESC
-    `);
+    const result = await safeQuery(`SELECT * FROM compliance_reviews ORDER BY created_at DESC`);
     res.json({ ok: true, reviews: result.rows || [] });
   } catch (e) {
-    console.error("Compliance reviews error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -566,7 +691,6 @@ app.get("/api/verified-results", async (req, res) => {
     `);
     res.json({ ok: true, results: result.rows || [] });
   } catch (e) {
-    console.error("Verified results error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
@@ -581,65 +705,39 @@ app.get("/api/audits", async (req, res) => {
     `);
     res.json({ ok: true, audits: result.rows || [] });
   } catch (e) {
-    console.error("Audits error:", e);
     res.status(500).json(mapDbError(e));
   }
 });
 
 app.get("/api/contracts/:id/pdf", async (req, res) => {
   try {
-    const contractRes = await safeQuery(
-      `
-      SELECT *
-      FROM contracts
-      WHERE id = $1
-      `,
-      [req.params.id]
-    );
+    const contractRes = await safeQuery(`SELECT * FROM contracts WHERE id = $1`, [req.params.id]);
 
     if (!contractRes.rows.length) {
       return res.status(404).json({ ok: false, error: "Contract not found" });
     }
 
     const contract = contractRes.rows[0];
-
-    const customerRes = await safeQuery(
-      `
-      SELECT *
-      FROM customers
-      WHERE id = $1
-      `,
-      [contract.customer_id]
-    );
-
+    const customerRes = await safeQuery(`SELECT * FROM customers WHERE id = $1`, [contract.customer_id]);
     const customer = customerRes.rows[0] || null;
 
     let application = null;
     if (customer) {
       const appRes = await safeQuery(
-        `
-        SELECT *
-        FROM applications
-        WHERE customer_id = $1
-        ORDER BY id DESC
-        LIMIT 1
-        `,
+        `SELECT * FROM applications WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
         [customer.id]
       );
       application = appRes.rows[0] || null;
     }
 
-    const pdfBuffer = generateContractPDF({
+    const pdfBuffer = await generateContractPDF({
       customer,
       contract,
       application,
     });
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="${contract.policy_number}.pdf"`
-    );
+    res.setHeader("Content-Disposition", `inline; filename="${contract.policy_number}.pdf"`);
     res.send(pdfBuffer);
   } catch (e) {
     console.error("Contract PDF error:", e);
@@ -649,19 +747,12 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
 
 app.get("/api/audit/export", async (req, res) => {
   try {
-    const logs = await safeQuery(`
-      SELECT *
-      FROM audit_logs
-      ORDER BY created_at DESC
-    `);
-
+    const logs = await safeQuery(`SELECT * FROM audit_logs ORDER BY created_at DESC`);
     const csv = stringify(logs.rows || [], { header: true });
-
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=audit_export.csv");
     res.send(csv);
   } catch (e) {
-    console.error("Audit export error:", e);
     res.status(500).json(mapDbError(e));
   }
 });

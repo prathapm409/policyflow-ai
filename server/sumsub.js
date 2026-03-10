@@ -1,5 +1,7 @@
-// server/sumsub.js
 const crypto = require("crypto");
+const axios = require("axios");
+
+const SUMSUB_BASE_URL = "https://api.sumsub.com";
 
 function requireEnv(key) {
   const v = process.env[key];
@@ -7,19 +9,49 @@ function requireEnv(key) {
   return v;
 }
 
-/**
- * Sign Sumsub API requests (X-App-Access-Sig)
- */
 function signSumsubRequest({ ts, method, path, body, secret }) {
-  // ts: integer timestamp seconds
-  // method: GET/POST etc
-  // path: request path + query
-  // body: raw string
-  secret = secret || process.env.SUMSUB_APP_SECRET || "";
-  const bodyHash = crypto.createHash("sha256").update(body || "", "utf8").digest("hex");
-  const payload = `${ts}.${method}.${path}.${bodyHash}`;
-  const sig = crypto.createHmac("sha256", String(secret)).update(payload, "utf8").digest("hex");
-  return sig;
+  const signingSecret = secret || process.env.SUMSUB_SECRET_KEY || "";
+  const rawBody = body || "";
+  const payload = `${ts}${method.toUpperCase()}${path}${rawBody}`;
+  return crypto
+    .createHmac("sha256", signingSecret)
+    .update(payload)
+    .digest("hex");
 }
 
-module.exports = { requireEnv, signSumsubRequest };
+async function sumsubRequest({ method, path, body }) {
+  const appToken = requireEnv("SUMSUB_APP_TOKEN");
+  const secret = requireEnv("SUMSUB_SECRET_KEY");
+  const ts = Math.floor(Date.now() / 1000).toString();
+  const rawBody = body ? JSON.stringify(body) : "";
+  const signature = signSumsubRequest({
+    ts,
+    method,
+    path,
+    body: rawBody,
+    secret,
+  });
+
+  const url = `${SUMSUB_BASE_URL}${path}`;
+
+  const response = await axios({
+    method,
+    url,
+    data: body,
+    headers: {
+      "X-App-Token": appToken,
+      "X-App-Access-Ts": ts,
+      "X-App-Access-Sig": signature,
+      "Content-Type": "application/json",
+    },
+    timeout: 30000,
+  });
+
+  return response.data;
+}
+
+module.exports = {
+  requireEnv,
+  signSumsubRequest,
+  sumsubRequest,
+};

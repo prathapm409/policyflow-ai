@@ -284,14 +284,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!selectedId && verifiedResults.length) {
-      setSelectedId(verifiedResults[0].id);
+    if (!selectedId && applications.length) {
+      setSelectedId(applications[0].id);
     }
-  }, [verifiedResults, selectedId]);
+  }, [applications, selectedId]);
 
   const selectedResult = useMemo(
-    () => verifiedResults.find((x) => x.id === selectedId) || applications.find((x) => x.id === selectedId) || null,
-    [verifiedResults, applications, selectedId]
+    () => applications.find((x) => x.id === selectedId) || null,
+    [applications, selectedId]
   );
 
   const riskPreview = useMemo(() => calcRisk(signals), [signals]);
@@ -319,11 +319,36 @@ export default function App() {
     setBusy(true);
     setError("");
     const res = await startKyc(id);
+
     if (!res?.ok) {
       setError(res?.error || "Failed to start KYC");
       setBusy(false);
       return;
     }
+
+    if (res?.sumsubToken && window?.snsWebSdk) {
+      try {
+        window
+          .snsWebSdk
+          .init(res.sumsubToken, () => Promise.resolve(res.sumsubToken))
+          .withConf({
+            lang: "en",
+          })
+          .withOptions({
+            addViewportTag: false,
+            adaptIframeHeight: true,
+          })
+          .on("idCheck.onApplicantStatusChanged", async () => {
+            await loadAll();
+          })
+          .build()
+          .launch("#sumsub-websdk-container");
+      } catch (e) {
+        console.error(e);
+        setError("Sumsub WebSDK failed to launch");
+      }
+    }
+
     await loadAll();
     setBusy(false);
   }
@@ -423,8 +448,6 @@ export default function App() {
         ))}
       </div>
 
-      {loading && <div>Loading...</div>}
-
       {error ? (
         <div
           style={{
@@ -439,6 +462,8 @@ export default function App() {
         </div>
       ) : null}
 
+      {loading && <div>Loading...</div>}
+
       {!loading && tab === "workflow" && (
         <>
           <Section
@@ -448,7 +473,7 @@ export default function App() {
                 <Badge bg="#e0f2fe" color="#0c4a6e">
                   KYC statuses: approved / rejected / pending / review
                 </Badge>
-                <Badge bg="#ecfccb" color="#365314">Sumsub signals enabled</Badge>
+                <Badge bg="#ecfccb" color="#365314">Sumsub enabled</Badge>
               </div>
             }
           >
@@ -515,6 +540,8 @@ export default function App() {
                     )}
                   </div>
                 </div>
+
+                <div id="sumsub-websdk-container" style={{ minHeight: 600, marginTop: 16 }} />
               </div>
 
               <div
@@ -524,10 +551,10 @@ export default function App() {
                   padding: 18,
                 }}
               >
-                <h3 style={{ marginTop: 0 }}>2) Simulate Sumsub verification result</h3>
+                <h3 style={{ marginTop: 0 }}>2) Simulate verification result</h3>
 
                 <div style={{ marginBottom: 10, fontSize: 14, opacity: 0.9 }}>
-                  Select an in-progress application below, then apply KYC status and risk labels/tags.
+                  Select an application, choose KYC status, then apply risk checks/tags.
                 </div>
 
                 <div style={{ display: "grid", gap: 12 }}>
@@ -587,7 +614,7 @@ export default function App() {
                     disabled={busy || !selectedResult}
                     onClick={() => onSimulateVerification(selectedResult)}
                   >
-                    Apply Sumsub Result & Run Risk Assignment
+                    Apply Result & Run Risk Assignment
                   </button>
                 </div>
               </div>
@@ -642,7 +669,7 @@ export default function App() {
 
                 <FlowCard
                   title="if risk tier = medium"
-                  subtitle="Create customer, send to compliance review, then move to review done page."
+                  subtitle="Create customer, then standard monitoring every 6 months."
                   active={workflowBranch === "MEDIUM"}
                 />
                 <FlowCard
@@ -652,13 +679,13 @@ export default function App() {
                 />
                 <FlowCard
                   title="send to compliance review"
-                  subtitle="Policy issuance paused and case sent to review queue."
-                  done={workflowBranch === "MEDIUM"}
+                  subtitle="Use only if business wants extra review."
+                  done={false}
                 />
                 <FlowCard
                   title="go to compliance review to be done page"
-                  subtitle="Dedicated compliance completion screen."
-                  done={workflowBranch === "MEDIUM"}
+                  subtitle="Optional based on business confirmation."
+                  done={false}
                 />
 
                 <div style={{ width: "100%" }} />
@@ -693,7 +720,7 @@ export default function App() {
 
                 <FlowCard
                   title="if risk tier = high / critical"
-                  subtitle="Send to compliance review and reject/escalate for critical."
+                  subtitle="Send to compliance review and hold/reject policy."
                   active={workflowBranch === "HIGH" || workflowBranch === "CRITICAL"}
                 />
                 <FlowCard
@@ -706,32 +733,6 @@ export default function App() {
                   subtitle="Case remains pending until reviewer action."
                   done={workflowBranch === "HIGH" || workflowBranch === "CRITICAL"}
                 />
-              </div>
-            </div>
-          </Section>
-
-          <Section title="Risk scoring model">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-              <div style={innerPanel}>
-                <h3 style={{ marginTop: 0 }}>Signal → Score Impact</h3>
-                <div style={{ display: "grid", gap: 10 }}>
-                  {SIGNAL_OPTIONS.map((s) => (
-                    <div key={s.key} style={scoreRow}>
-                      <span>{s.label}</span>
-                      <Badge bg="#312e81">+{s.impact}</Badge>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div style={innerPanel}>
-                <h3 style={{ marginTop: 0 }}>Score → Tier → Action</h3>
-                <div style={{ display: "grid", gap: 12 }}>
-                  <div style={scoreRow}><span>0–20</span><Badge bg={TIER_COLORS.LOW}>LOW</Badge><span>Auto approve</span></div>
-                  <div style={scoreRow}><span>21–50</span><Badge bg={TIER_COLORS.MEDIUM}>MEDIUM</Badge><span>Standard monitoring</span></div>
-                  <div style={scoreRow}><span>51–80</span><Badge bg={TIER_COLORS.HIGH}>HIGH</Badge><span>Manual review</span></div>
-                  <div style={scoreRow}><span>80+</span><Badge bg={TIER_COLORS.CRITICAL}>CRITICAL</Badge><span>Reject / escalate</span></div>
-                </div>
               </div>
             </div>
           </Section>
@@ -996,13 +997,6 @@ const innerPanel = {
   background: "#0f1b39",
   borderRadius: 16,
   padding: 18,
-};
-
-const scoreRow = {
-  display: "grid",
-  gridTemplateColumns: "1.4fr 100px 1fr",
-  gap: 12,
-  alignItems: "center",
 };
 
 const miniCard = {

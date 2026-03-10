@@ -18,6 +18,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+function getSumsubLevelName() {
+  return process.env.SUMSUB_LEVEL_NAME || "basic-kyc-level";
+}
+
 function mapDbError(error) {
   return {
     ok: false,
@@ -63,6 +67,7 @@ app.get("/api/debug/env", async (req, res) => {
     hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
     hasSumsubAppToken: Boolean(process.env.SUMSUB_APP_TOKEN),
     hasSumsubSecretKey: Boolean(process.env.SUMSUB_SECRET_KEY),
+    sumsubLevelName: getSumsubLevelName(),
   });
 });
 
@@ -208,7 +213,7 @@ app.post("/api/sumsub/applicant", async (req, res) => {
 
     const applicant = await sumsubRequest({
       method: "POST",
-      path: "/resources/applicants?levelName=basic-kyc-level",
+      path: `/resources/applicants?levelName=${encodeURIComponent(getSumsubLevelName())}`,
       body: {
         externalUserId,
         email: application.email,
@@ -262,7 +267,7 @@ app.post("/api/sumsub/access-token", async (req, res) => {
 
     const application = appRes.rows[0];
 
-    let applicantId = application.external_applicant_id;
+    const applicantId = application.external_applicant_id;
     if (!applicantId) {
       return res.status(400).json({
         ok: false,
@@ -279,7 +284,7 @@ app.post("/api/sumsub/access-token", async (req, res) => {
           email: application.email,
         },
         ttlInSecs: 1800,
-        levelName: "basic-kyc-level",
+        levelName: getSumsubLevelName(),
       },
     });
 
@@ -309,7 +314,7 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
       const externalUserId = `policyflow-${application.id}-${uuid()}`;
       const applicant = await sumsubRequest({
         method: "POST",
-        path: "/resources/applicants?levelName=basic-kyc-level",
+        path: `/resources/applicants?levelName=${encodeURIComponent(getSumsubLevelName())}`,
         body: {
           externalUserId,
           email: application.email,
@@ -361,7 +366,7 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
           email: application.email,
         },
         ttlInSecs: 1800,
-        levelName: "basic-kyc-level",
+        levelName: getSumsubLevelName(),
       },
     });
 

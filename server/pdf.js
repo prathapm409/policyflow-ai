@@ -1,119 +1,183 @@
-// server/pdf.js
-// PDF generator that renders an Insurance Policy Agreement (two pages like screenshot)
 const PDFDocument = require("pdfkit");
 
-function generateContractPDF({ customer = {}, contract = {} }) {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ size: "A4", margin: 48 });
-      const chunks = [];
-      doc.on("data", (c) => chunks.push(c));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.on("error", (err) => reject(err));
-
-      const formatDate = (d) => {
-        if (!d) return "-";
-        const dt = new Date(d);
-        return dt.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
-      };
-      const nl = (s) => (s ? String(s) : "-");
-
-      // Header
-      doc.fontSize(20).font("Helvetica-Bold").text("Insurance Policy Agreement", { align: "center" });
-      doc.moveDown(1.2);
-
-      // Two-column area
-      const leftX = doc.page.margins.left;
-      const rightX = 260;
-      let y = doc.y;
-      const rowGap = 18;
-      const writeRow = (label, value) => {
-        doc.font("Helvetica").fontSize(11).text(label, leftX, y);
-        doc.font("Helvetica").fontSize(11).text(value, rightX, y);
-        y += rowGap;
-      };
-
-      writeRow("Policy Number:", nl(contract.policy_number || contract.policyNumber || `POL-${Math.floor(Math.random()*900000)+100000}`));
-      writeRow("Policy Issue Date:", formatDate(contract.created_at || contract.issue_date || new Date()));
-      writeRow("Insurer:", nl(contract.insurer || "Northern Shield Insurance Ltd"));
-      writeRow("Insurer Address:", nl(contract.insurer_address || "42 Bishopsgate, London, UK"));
-      writeRow("Policyholder:", nl(customer.full_name || contract.policyholder || "-"));
-      writeRow("Address:", nl(contract.policyholder_address || customer.address || "-"));
-      writeRow("Date of Birth:", formatDate(contract.dob || contract.date_of_birth));
-      doc.moveDown(2);
-
-      // Policy Details
-      doc.font("Helvetica-Bold").fontSize(16).text("Policy Details");
-      doc.moveDown(0.6);
-      doc.font("Helvetica").fontSize(11);
-      doc.text(`Policy Type: ${nl(contract.policy_type || "Motor Insurance")}`);
-      doc.moveDown(0.3);
-      doc.text(`Coverage Start Date: ${formatDate(contract.coverage_start || contract.coverageStart || contract.created_at)}`);
-      doc.text(`Coverage End Date: ${formatDate(contract.coverage_end || contract.coverageEnd)}`);
-      doc.moveDown(0.6);
-      doc.fontSize(11).text("Coverage Description:");
-      doc.moveDown(0.3);
-      doc.fontSize(11).text(nl(contract.coverage_description || "Comprehensive coverage for private motor vehicle including accidental damage, theft, and third-party liability."), { align: "left" });
-      doc.moveDown(0.6);
-      doc.fontSize(11);
-      doc.text(`Coverage Limit: ${nl(contract.coverage_limit || "£50,000")}`);
-      doc.text(`Deductible: ${nl(contract.deductible || "£500")}`);
-      doc.text(`Annual Premium: ${nl(contract.premium || "£820")}`);
-      doc.text(`Payment Frequency: ${nl(contract.payment_frequency || "Monthly")}`);
-
-      // New page for verification & risk etc.
-      doc.addPage();
-      doc.font("Helvetica-Bold").fontSize(18).text("Identity Verification");
-      doc.moveDown(0.6);
-      doc.font("Helvetica").fontSize(11);
-      doc.text(`Verification Provider: Sumsub`);
-      doc.text(`Verification ID: ${nl(contract.sumsub_verification_id || contract.sumsubId || contract.verification_id)}`);
-      doc.text(`Verification Status: ${nl(contract.sumsub_status || contract.verification_status || "Approved")}`);
-      doc.text(`Verification Date: ${formatDate(contract.sumsub_verified_at || contract.verified_at || contract.created_at)}`);
-      doc.moveDown(1);
-
-      doc.font("Helvetica-Bold").fontSize(16).text("Risk Classification");
-      doc.moveDown(0.5);
-      doc.font("Helvetica").fontSize(11);
-      doc.text(`Risk Tier Assigned: ${nl(customer.risk_tier || contract.risk_tier || "Medium")}`);
-      doc.text(`Monitoring Frequency: ${nl(contract.monitoring_frequency || customer.monitoring_frequency || "Quarterly")}`);
-      doc.moveDown(1.2);
-
-      doc.font("Helvetica-Bold").fontSize(16).text("Policyholder Responsibilities");
-      doc.moveDown(0.4);
-      doc.font("Helvetica").fontSize(11);
-      doc.text("The policyholder agrees to provide accurate and truthful information during the application process and notify the insurer of any material changes affecting the risk profile.");
-      doc.moveDown(1.2);
-
-      doc.font("Helvetica-Bold").fontSize(18).text("Claims");
-      doc.moveDown(0.6);
-      doc.font("Helvetica").fontSize(11);
-      doc.text("Claims must be reported within 30 days of the incident.");
-      doc.moveDown(0.3);
-      doc.text("Claims may be subject to investigation if anomalies or fraud indicators are detected.");
-      doc.moveDown(1.2);
-
-      doc.font("Helvetica-Bold").fontSize(18).text("Agreement");
-      doc.moveDown(0.6);
-      doc.font("Helvetica").fontSize(11);
-      doc.text(`Insurer Representative: ${nl(contract.insurer_representative || "Sarah Bennett – Senior Underwriter")}`);
-      doc.moveDown(0.6);
-      doc.text(`Policyholder: ${nl(customer.full_name || contract.policyholder || "-")}`);
-      doc.moveDown(0.6);
-      doc.text(`Date: ${formatDate(contract.created_at || new Date())}`);
-      doc.moveDown(2);
-
-      doc.text("_______________________________", { continued: false });
-      doc.text("Insurer Representative Signature", { align: "left" });
-      doc.moveUp(1);
-      doc.text("_______________________________", { align: "right" });
-      doc.text("Policyholder Signature", { align: "right" });
-
-      doc.end();
-    } catch (e) {
-      reject(e);
-    }
+function formatDate(value) {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
   });
+}
+
+function generateContractPDF({ customer, contract, application }) {
+  const doc = new PDFDocument({
+    margin: 40,
+    size: "A4",
+  });
+
+  const chunks = [];
+  doc.on("data", (c) => chunks.push(c));
+
+  const insurerName = "Northern Shield Insurance Ltd";
+  const insurerAddress = "42 Bishopsgate, London, UK";
+
+  const policyNumber = contract?.policy_number || "POL-UK-2026-000384";
+  const policyIssueDate = formatDate(contract?.created_at || new Date());
+
+  const policyholderName = customer?.full_name || application?.full_name || "James Carter";
+  const policyholderAddress = application?.address || "14 Kingsway Avenue, Manchester, UK";
+  const policyholderDob = application?.date_of_birth || "21 July 1985";
+
+  const coverageStartDate = application?.coverage_start_date || "15 March 2026";
+  const coverageEndDate = application?.coverage_end_date || "14 March 2027";
+  const coverageDescription =
+    application?.coverage_description ||
+    "Comprehensive coverage for private motor vehicle including accidental damage, theft, and third-party liability.";
+
+  const coverageLimit = application?.coverage_limit || "£50,000";
+  const deductible = application?.deductible || "£500";
+  const annualPremium = application?.annual_premium || "£820";
+  const paymentFrequency = application?.payment_frequency || "Monthly";
+
+  const verificationId = customer?.external_id || application?.external_applicant_id || "SUM-93840294";
+  const verificationStatus = application?.kyc_status || "Approved";
+  const verificationDate = formatDate(application?.updated_at || contract?.created_at || new Date());
+
+  const riskTier = customer?.risk_tier || application?.risk_tier || "Medium";
+  const monitoringFrequency = application?.monitoring_frequency || "Quarterly";
+
+  const representative = "Sarah Bennett – Senior Underwriter";
+  const agreementDate = formatDate(contract?.created_at || new Date());
+
+  doc.rect(0, 0, doc.page.width, doc.page.height).fill("#e9e9e9");
+  doc.fillColor("black");
+  doc.rect(28, 28, doc.page.width - 56, doc.page.height - 56).fill("#f7f7f7");
+  doc.fillColor("black");
+
+  let y = 80;
+
+  doc.font("Helvetica-Bold").fontSize(22).text("Insurance Policy Agreement", 0, y, {
+    align: "center",
+  });
+
+  y += 70;
+
+  const leftX = 70;
+  const rightX = 330;
+  const labelGap = 36;
+
+  function twoCol(label, value) {
+    doc.font("Helvetica").fontSize(12).text(label, leftX, y);
+    doc.text(value, rightX, y);
+    y += labelGap;
+  }
+
+  twoCol("Policy Number:", policyNumber);
+  twoCol("Policy Issue Date:", policyIssueDate);
+  twoCol("Insurer:", insurerName);
+  twoCol("Insurer Address:", insurerAddress);
+  twoCol("Policyholder:", policyholderName);
+  twoCol("Address:", policyholderAddress);
+  twoCol("Date of Birth:", policyholderDob);
+
+  y += 40;
+
+  doc.font("Helvetica-Bold").fontSize(17).text("Policy Details", leftX, y);
+  y += 34;
+
+  doc.font("Helvetica").fontSize(12).text("Policy Type: Motor Insurance", leftX, y);
+  y += 28;
+  doc.text(`Coverage Start Date: ${coverageStartDate}`, leftX, y);
+  y += 28;
+  doc.text(`Coverage End Date: ${coverageEndDate}`, leftX, y);
+  y += 38;
+
+  doc.text("Coverage Description:", leftX, y);
+  y += 24;
+  doc.text(coverageDescription, leftX, y, {
+    width: 760,
+    lineGap: 3,
+  });
+  y += 64;
+
+  doc.text(`Coverage Limit: ${coverageLimit}`, leftX, y);
+  y += 28;
+  doc.text(`Deductible: ${deductible}`, leftX, y);
+  y += 28;
+  doc.text(`Annual Premium: ${annualPremium}`, leftX, y);
+  y += 28;
+  doc.text(`Payment Frequency: ${paymentFrequency}`, leftX, y);
+  y += 58;
+
+  doc.font("Helvetica-Bold").fontSize(17).text("Identity Verification", leftX, y);
+  y += 34;
+  doc.font("Helvetica").fontSize(12).text(`Verification Provider: Sumsub`, leftX, y);
+  y += 28;
+  doc.text(`Verification ID: ${verificationId}`, leftX, y);
+  y += 28;
+  doc.text(`Verification Status: ${verificationStatus}`, leftX, y);
+  y += 28;
+  doc.text(`Verification Date: ${verificationDate}`, leftX, y);
+  y += 58;
+
+  doc.font("Helvetica-Bold").fontSize(17).text("Risk Classification", leftX, y);
+  y += 34;
+  doc.font("Helvetica").fontSize(12).text(`Risk Tier Assigned: ${riskTier}`, leftX, y);
+  y += 28;
+  doc.text(`Monitoring Frequency: ${monitoringFrequency}`, leftX, y);
+
+  doc.addPage();
+  doc.rect(0, 0, doc.page.width, doc.page.height).fill("#e9e9e9");
+  doc.fillColor("black");
+  doc.rect(28, 28, doc.page.width - 56, doc.page.height - 56).fill("#f7f7f7");
+  doc.fillColor("black");
+
+  y = 110;
+
+  doc.font("Helvetica-Bold").fontSize(17).text("Policyholder Responsibilities", 70, y);
+  y += 40;
+  doc.font("Helvetica").fontSize(12).text(
+    "The policyholder agrees to provide accurate and truthful information during the application process and notify the insurer of any material changes affecting the risk profile.",
+    70,
+    y,
+    {
+      width: 760,
+      lineGap: 6,
+    }
+  );
+
+  y += 120;
+
+  doc.font("Helvetica-Bold").fontSize(17).text("Claims", 70, y);
+  y += 40;
+  doc.font("Helvetica").fontSize(12).text(
+    "Claims must be reported within 30 days of the incident.",
+    70,
+    y,
+    { width: 760, lineGap: 6 }
+  );
+  y += 34;
+  doc.text(
+    "Claims may be subject to investigation if anomalies or fraud indicators are detected.",
+    70,
+    y,
+    { width: 760, lineGap: 6 }
+  );
+
+  y += 120;
+
+  doc.font("Helvetica-Bold").fontSize(17).text("Agreement", 70, y);
+  y += 40;
+  doc.font("Helvetica").fontSize(12).text(`Insurer Representative: ${representative}`, 70, y);
+  y += 44;
+  doc.text(`Policyholder: ${policyholderName}`, 70, y);
+  y += 44;
+  doc.text(`Date: ${agreementDate}`, 70, y);
+
+  doc.end();
+  return Buffer.concat(chunks);
 }
 
 module.exports = { generateContractPDF };

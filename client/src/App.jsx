@@ -145,6 +145,36 @@ function EmptyState({ title, subtitle }) {
   );
 }
 
+function KycModal({ open, onClose, title }) {
+  if (!open) return null;
+
+  return (
+    <div style={modalBackdrop}>
+      <div style={modalCard}>
+        <div style={modalHeader}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900 }}>{title}</div>
+            <div style={{ opacity: 0.75, marginTop: 4 }}>
+              Complete document verification and selfie/liveness in this window.
+            </div>
+          </div>
+          <button style={closeBtn} onClick={onClose}>✕</button>
+        </div>
+
+        <div
+          id="sumsub-websdk-container"
+          style={{
+            minHeight: "78vh",
+            borderRadius: 12,
+            overflow: "hidden",
+            background: "#fff",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [summary, setSummary] = useState({ counts: {}, customers: [], audits: [], contracts: [] });
   const [applications, setApplications] = useState([]);
@@ -172,11 +202,11 @@ export default function App() {
   });
   const [simStatus, setSimStatus] = useState("APPROVED");
 
+  const [kycModalOpen, setKycModalOpen] = useState(false);
+  const [kycTitle, setKycTitle] = useState("Sumsub Verification");
+
   async function loadAll() {
     setLoading(true);
-    setError("");
-    setInfo("");
-
     try {
       const [summaryRes, appsRes, contractsRes, customersRes, reviewsRes, verifiedRes] =
         await Promise.all([
@@ -242,7 +272,6 @@ export default function App() {
 
       setInfo("Application created successfully.");
       setForm({ fullName: "", email: "" });
-
       await loadAll();
       setTab("applications");
     } catch (e) {
@@ -253,39 +282,56 @@ export default function App() {
     }
   }
 
-  async function onStartKyc(id) {
+  async function onStartKyc(app) {
     setBusy(true);
     setError("");
     setInfo("");
 
     try {
-      const res = await startKyc(id);
+      const res = await startKyc(app.id);
       if (!res?.ok) {
         setError(res?.error || "Failed to start Sumsub");
         return;
       }
 
-      if (res?.sumsubToken && window?.snsWebSdk) {
+      if (!res?.sumsubToken) {
+        setError("Sumsub token was not returned by backend.");
+        return;
+      }
+
+      if (!window?.snsWebSdk) {
+        setError("Sumsub WebSDK script not loaded.");
+        return;
+      }
+
+      setKycTitle(`Sumsub Verification — ${app.full_name}`);
+      setKycModalOpen(true);
+
+      setTimeout(() => {
         try {
           window
             .snsWebSdk
             .init(res.sumsubToken, () => Promise.resolve(res.sumsubToken))
-            .withConf({ lang: "en" })
-            .withOptions({ addViewportTag: false, adaptIframeHeight: true })
+            .withConf({
+              lang: "en",
+            })
+            .withOptions({
+              addViewportTag: false,
+              adaptIframeHeight: true,
+            })
+            .on("idCheck.onApplicantStatusChanged", async () => {
+              await loadAll();
+            })
             .build()
             .launch("#sumsub-websdk-container");
 
-          setInfo("Sumsub KYC launched successfully.");
-          setTab("workflow");
-        } catch (e) {
-          console.error(e);
-          setError("Sumsub WebSDK failed to launch");
+          setInfo("Sumsub verification opened.");
+        } catch (sdkErr) {
+          console.error(sdkErr);
+          setError("Sumsub popup failed to open.");
+          setKycModalOpen(false);
         }
-      } else {
-        setInfo("KYC started, but Sumsub WebSDK token was not returned.");
-      }
-
-      await loadAll();
+      }, 100);
     } catch (e) {
       console.error(e);
       setError("Start Sumsub failed");
@@ -434,8 +480,6 @@ export default function App() {
                 />
                 <button type="submit" style={primaryBtn} disabled={busy}>Create Application</button>
               </form>
-
-              <div id="sumsub-websdk-container" style={{ minHeight: 560, marginTop: 18 }} />
             </div>
 
             <div style={panelStyle}>
@@ -541,8 +585,16 @@ export default function App() {
                     <tr key={a.id}>
                       <td style={thtd}>{a.full_name}</td>
                       <td style={thtd}>{a.email}</td>
-                      <td style={thtd}><Badge bg={STATUS_COLORS[a.kyc_status] || "#475569"}>{prettyStatus(a.kyc_status)}</Badge></td>
-                      <td style={thtd}><Badge bg={TIER_COLORS[a.risk_tier] || "#334155"}>{prettyStatus(a.risk_tier)}</Badge></td>
+                      <td style={thtd}>
+                        <Badge bg={STATUS_COLORS[a.kyc_status] || "#475569"}>
+                          {prettyStatus(a.kyc_status)}
+                        </Badge>
+                      </td>
+                      <td style={thtd}>
+                        <Badge bg={TIER_COLORS[a.risk_tier] || "#334155"}>
+                          {prettyStatus(a.risk_tier)}
+                        </Badge>
+                      </td>
                       <td style={thtd}>{prettyStatus(a.decision_status)}</td>
                       <td style={thtd}>{prettyStatus(a.compliance_status)}</td>
                       <td style={thtd}>{prettyStatus(a.policy_status)}</td>
@@ -560,7 +612,7 @@ export default function App() {
                         </select>
                       </td>
                       <td style={thtd}>
-                        <button style={secondaryBtn} onClick={() => onStartKyc(a.id)} disabled={busy}>
+                        <button style={secondaryBtn} onClick={() => onStartKyc(a)} disabled={busy}>
                           Start Sumsub
                         </button>
                       </td>
@@ -696,6 +748,12 @@ export default function App() {
           )}
         </Section>
       )}
+
+      <KycModal
+        open={kycModalOpen}
+        onClose={() => setKycModalOpen(false)}
+        title={kycTitle}
+      />
     </div>
   );
 }
@@ -780,4 +838,49 @@ const thtd = {
   padding: "14px 12px",
   textAlign: "left",
   borderBottom: "1px solid rgba(255,255,255,0.08)",
+};
+
+const modalBackdrop = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(2, 8, 23, 0.72)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 20,
+  zIndex: 9999,
+};
+
+const modalCard = {
+  width: "min(1100px, 96vw)",
+  height: "min(900px, 92vh)",
+  background: "#0f172a",
+  borderRadius: 18,
+  boxShadow: "0 30px 100px rgba(0,0,0,0.45)",
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+};
+
+const modalHeader = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  padding: "18px 20px",
+  borderBottom: "1px solid rgba(255,255,255,0.08)",
+  background: "#111c39",
+  color: "#fff",
+};
+
+const closeBtn = {
+  border: "none",
+  background: "#22325d",
+  color: "#fff",
+  width: 40,
+  height: 40,
+  borderRadius: 10,
+  cursor: "pointer",
+  fontSize: 18,
+  fontWeight: 800,
 };

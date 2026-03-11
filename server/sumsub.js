@@ -10,10 +10,8 @@ function requireEnv(key) {
 }
 
 function signSumsubRequest({ ts, method, path, body, secret }) {
-  const signingSecret = secret || process.env.SUMSUB_SECRET_KEY || "";
-  const rawBody = body || "";
-  const payload = `${ts}${method.toUpperCase()}${path}${rawBody}`;
-  return crypto.createHmac("sha256", signingSecret).update(payload).digest("hex");
+  const payload = `${ts}${method.toUpperCase()}${path}${body || ""}`;
+  return crypto.createHmac("sha256", secret).update(payload).digest("hex");
 }
 
 async function sumsubRequest({ method, path, body }) {
@@ -45,8 +43,27 @@ async function sumsubRequest({ method, path, body }) {
   return response.data;
 }
 
+function verifyWebhookSignature(req) {
+  const secret = process.env.SUMSUB_WEBHOOK_SECRET;
+  if (!secret) return true;
+
+  const header =
+    req.headers["x-payload-digest"] ||
+    req.headers["x-signature"] ||
+    req.headers["x-payload-digest-sha256"] ||
+    "";
+
+  if (!header) return false;
+
+  const rawBody = req.rawBody || JSON.stringify(req.body || {});
+  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+
+  return header.includes(expected) || header === expected;
+}
+
 module.exports = {
   requireEnv,
   signSumsubRequest,
   sumsubRequest,
+  verifyWebhookSignature,
 };

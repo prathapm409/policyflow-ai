@@ -12,11 +12,17 @@ const {
   monitoringFrequencyForTier,
 } = require("./rules");
 const { generateContractPDF } = require("./pdf");
-const { sumsubRequest } = require("./sumsub");
+const { sumsubRequest, verifyWebhookSignature } = require("./sumsub");
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString("utf8");
+    },
+  })
+);
 
 function getSumsubLevelName() {
   return process.env.SUMSUB_LEVEL_NAME || "id-and-liveness";
@@ -55,12 +61,7 @@ function normalizeTier(input) {
 }
 
 function extractApplicantId(payload = {}) {
-  return (
-    payload.applicantId ||
-    payload.externalApplicantId ||
-    payload.applicant_id ||
-    null
-  );
+  return payload.applicantId || payload.externalApplicantId || payload.applicant_id || null;
 }
 
 function extractVerificationStatus(payload = {}) {
@@ -71,9 +72,7 @@ function extractVerificationStatus(payload = {}) {
     payload.reviewResult?.reviewAnswer ||
     null;
 
-  if (direct) {
-    return normalizeVerificationStatus(direct);
-  }
+  if (direct) return normalizeVerificationStatus(direct);
 
   const type = String(payload.type || "").trim();
   if (type === "applicantPending") return "PENDING";
@@ -84,12 +83,15 @@ function extractVerificationStatus(payload = {}) {
   return "PENDING";
 }
 
-function buildSignalPayload(payload = {}) {
-  const labels = []
+function getRejectLabels(payload = {}) {
+  return []
     .concat(payload?.reviewResult?.rejectLabels || [])
     .concat(payload?.sumsubRejectLabels || [])
     .map((x) => String(x).toUpperCase());
+}
 
+function buildSignalPayload(payload = {}) {
+  const labels = getRejectLabels(payload);
   const hasLabel = (needle) => labels.some((x) => x.includes(needle));
 
   return {
@@ -100,12 +102,16 @@ function buildSignalPayload(payload = {}) {
       Boolean(payload.documentFraudDetected) ||
       hasLabel("TAMPER") ||
       hasLabel("FRAUD") ||
-      hasLabel("FORGERY"),
+      hasLabel("FORGERY") ||
+      hasLabel("PRINTED") ||
+      hasLabel("COPY") ||
+      hasLabel("SCREEN"),
     faceMismatch:
       Boolean(payload.faceMismatch) ||
       hasLabel("FACE") ||
       hasLabel("MISMATCH") ||
-      hasLabel("LIVENESS"),
+      hasLabel("LIVENESS") ||
+      hasLabel("SELFIE"),
     highRiskCountry:
       Boolean(payload.highRiskCountry) ||
       hasLabel("COUNTRY") ||
@@ -121,6 +127,160 @@ function buildSignalPayload(payload = {}) {
   };
 }
 
+function deriveStrictVerification(payload = {}, baseStatus) {
+  const labels = getRejectLabels(payload);
+  const rejectType = String(payload?.reviewResult?.reviewRejectType || "").toUpperCase();
+
+  const hardRejectKeywords = [
+    "FORGERY",
+    "FRAUD",
+    "TAMPER",
+    "PRINTED",
+    "COPY",
+    "SCREEN",
+    "SELFIE_MISMATCH",
+    "FACE_MISMATCH",
+    "THIRD_PARTY",
+    "DOCUMENT_DAMAGED",
+    "BAD_QUALITY",
+  ];
+
+  const hasHardReject = labels.some((l) => hardRejectKeywords.some((k) => l.includes(k)));
+
+  if (hasHardReject || rejectType === "FINAL") return "REJECTED";
+  if (String(baseStatus).toUpperCase() === "APPROVED" && labels.length > 0) return "REVIEW";
+  return baseStatus;
+}
+
+async function ensureCustomer(application, applicantId, riskTier, score) {
+  const existingCustomer = await safeQuery(
+    `SELECT * FROM customers WHERE external_id = $1 ORDER BY id DESC LIMIT 1`,
+    [applicantId]
+  );
+
+  if (existingCustomer.rows.length) {
+    return existingCustomer.rows[0];
+  }
+
+  const customerRes = await safeQuery(
+    `
+    INSERT INTO customers (external_id, full_name, email, risk_tier, risk_score)
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING *
+    `,
+    [applicantId, application.full_name, application.email, riskTier, score]
+  );
+
+  await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [application.id, customerRes.rows[0].id]);
+
+  return customerRes.rows[0];
+}
+
+async function ensureContract(application, customer, applicantId, verificationStatus, monitoringFrequency) {
+  const existingContract = await safeQuery(
+    `SELECT * FROM contracts WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
+    [customer.id]
+  );
+
+  if (existingContract.rows.length) {
+    await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [application.id, existingContract.rows[0].id]);
+    return existingContract.rows[0];
+  }
+
+  const contractRes = await safeQuery(
+    `
+    INSERT INTO contracts (
+      customer_id,
+      policy_number,
+      status,
+      coverage_start,
+      coverage_end,
+      coverage_description,
+      coverage_limit,
+      deductible,
+      premium,
+      payment_frequency,
+      insurer,
+      insurer_address,
+      policyholder_address,
+      dob,
+      sumsub_verification_id,
+      sumsub_status,
+      sumsub_verified_at,
+      monitoring_frequency
+    )
+    VALUES (
+      $1, $2, $3,
+      NOW(),
+      NOW() + INTERVAL '1 year',
+      $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15
+    )
+    RETURNING *
+    `,
+    [
+      customer.id,
+      `POL-UK-${new Date().getFullYear()}-${String(customer.id).padStart(6, "0")}`,
+      "Generated",
+      "Comprehensive coverage for private motor vehicle including accidental damage, theft, and third-party liability.",
+      "£50,000",
+      "£500",
+      "£820",
+      "Monthly",
+      "Northern Shield Insurance Ltd",
+      "42 Bishopsgate, London, UK",
+      "14 Kingsway Avenue, Manchester, UK",
+      "1985-07-21",
+      applicantId,
+      verificationStatus,
+      monitoringFrequency || "12_MONTHS",
+    ]
+  );
+
+  await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [application.id, contractRes.rows[0].id]);
+  return contractRes.rows[0];
+}
+
+async function ensureMonitoring(customerId, frequency) {
+  if (!frequency) return;
+  const existing = await safeQuery(`SELECT * FROM monitoring WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`, [customerId]);
+  if (existing.rows.length) return existing.rows[0];
+
+  const inserted = await safeQuery(
+    `INSERT INTO monitoring (customer_id, frequency, status, next_review_at) VALUES ($1, $2, 'ACTIVE', NOW() + INTERVAL '30 days') RETURNING *`,
+    [customerId, frequency]
+  );
+  return inserted.rows[0];
+}
+
+async function createComplianceReview(applicationId, applicantId, score, riskTier, reason) {
+  const existing = await safeQuery(
+    `SELECT * FROM compliance_reviews WHERE application_id = $1 ORDER BY id DESC LIMIT 1`,
+    [applicationId]
+  );
+
+  if (existing.rows.length && ["PENDING_REVIEW", "IN_PROGRESS"].includes(existing.rows[0].status)) {
+    return existing.rows[0];
+  }
+
+  const inserted = await safeQuery(
+    `
+    INSERT INTO compliance_reviews (
+      application_id,
+      applicant_id,
+      risk_score,
+      risk_tier,
+      status,
+      reason
+    )
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING *
+    `,
+    [applicationId, applicantId, score, riskTier, "PENDING_REVIEW", reason]
+  );
+
+  return inserted.rows[0];
+}
+
 app.get("/api/debug/env", async (req, res) => {
   res.json({
     ok: true,
@@ -128,6 +288,7 @@ app.get("/api/debug/env", async (req, res) => {
     hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
     hasSumsubAppToken: Boolean(process.env.SUMSUB_APP_TOKEN),
     hasSumsubSecretKey: Boolean(process.env.SUMSUB_SECRET_KEY),
+    hasSumsubWebhookSecret: Boolean(process.env.SUMSUB_WEBHOOK_SECRET),
     sumsubLevelName: getSumsubLevelName(),
   });
 });
@@ -139,23 +300,13 @@ app.get("/api/summary", async (req, res) => {
         (SELECT COUNT(*) FROM applications) AS applications,
         (SELECT COUNT(*) FROM customers) AS customers,
         (SELECT COUNT(*) FROM contracts) AS contracts,
-        (SELECT COUNT(*) FROM audit_logs) AS audits
+        (SELECT COUNT(*) FROM audit_logs) AS audits,
+        (SELECT COUNT(*) FROM compliance_reviews WHERE status IN ('PENDING_REVIEW','IN_PROGRESS')) AS open_reviews,
+        (SELECT COUNT(*) FROM monitoring) AS monitoring
     `);
 
-    const customers = await safeQuery(`
-      SELECT *
-      FROM customers
-      ORDER BY created_at DESC
-      LIMIT 10
-    `);
-
-    const audits = await safeQuery(`
-      SELECT *
-      FROM audit_logs
-      ORDER BY created_at DESC
-      LIMIT 10
-    `);
-
+    const customers = await safeQuery(`SELECT * FROM customers ORDER BY created_at DESC LIMIT 10`);
+    const audits = await safeQuery(`SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 10`);
     const contracts = await safeQuery(`
       SELECT c.*, cu.full_name, cu.email, cu.risk_tier
       FROM contracts c
@@ -200,10 +351,7 @@ app.get("/api/applications", async (req, res) => {
       ORDER BY id DESC
     `);
 
-    res.json({
-      ok: true,
-      applications: result.rows || [],
-    });
+    res.json({ ok: true, applications: result.rows || [] });
   } catch (e) {
     res.status(500).json(mapDbError(e));
   }
@@ -212,12 +360,8 @@ app.get("/api/applications", async (req, res) => {
 app.post("/api/applications", async (req, res) => {
   try {
     const { fullName, email } = req.body || {};
-
     if (!fullName || !email) {
-      return res.status(400).json({
-        ok: false,
-        error: "fullName and email are required",
-      });
+      return res.status(400).json({ ok: false, error: "fullName and email are required" });
     }
 
     const result = await safeQuery(
@@ -239,10 +383,10 @@ app.post("/api/applications", async (req, res) => {
       [fullName, email]
     );
 
-    await safeQuery(
-      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
-      ["APPLICATION_CREATED", { applicationId: result.rows[0].id, fullName, email }]
-    );
+    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
+      "APPLICATION_CREATED",
+      { applicationId: result.rows[0].id, fullName, email },
+    ]);
 
     res.json({ ok: true, application: result.rows[0] });
   } catch (e) {
@@ -254,152 +398,30 @@ app.post("/api/applications/:id/risk-tier", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const overrideTier = normalizeTier(req.body?.riskTier);
-
     if (!overrideTier) {
-      return res.status(400).json({
-        ok: false,
-        error: "riskTier must be one of LOW, MEDIUM, HIGH, CRITICAL",
-      });
-    }
-
-    const existing = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [id]);
-    if (!existing.rows.length) {
-      return res.status(404).json({ ok: false, error: "Application not found" });
+      return res.status(400).json({ ok: false, error: "riskTier must be one of LOW, MEDIUM, HIGH, CRITICAL" });
     }
 
     const updated = await safeQuery(
       `
       UPDATE applications
-      SET
-        risk_override_tier = $2,
-        risk_tier = $2,
-        updated_at = NOW()
+      SET risk_override_tier = $2, risk_tier = $2, updated_at = NOW()
       WHERE id = $1
       RETURNING *
       `,
       [id, overrideTier]
     );
 
-    await safeQuery(
-      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
-      ["RISK_TIER_OVERRIDDEN", { applicationId: id, riskTier: overrideTier }]
-    );
-
-    res.json({
-      ok: true,
-      application: updated.rows[0],
-    });
-  } catch (e) {
-    res.status(500).json(mapDbError(e));
-  }
-});
-
-app.post("/api/sumsub/applicant", async (req, res) => {
-  try {
-    const { applicationId } = req.body || {};
-    if (!applicationId) {
-      return res.status(400).json({ ok: false, error: "applicationId is required" });
-    }
-
-    const appRes = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [applicationId]);
-    if (!appRes.rows.length) {
+    if (!updated.rows.length) {
       return res.status(404).json({ ok: false, error: "Application not found" });
     }
 
-    const application = appRes.rows[0];
-    if (application.external_applicant_id) {
-      return res.json({
-        ok: true,
-        applicantId: application.external_applicant_id,
-        application,
-      });
-    }
+    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
+      "RISK_TIER_OVERRIDDEN",
+      { applicationId: id, riskTier: overrideTier },
+    ]);
 
-    const externalUserId = `policyflow-${application.id}-${uuid()}`;
-
-    const applicant = await sumsubRequest({
-      method: "POST",
-      path: `/resources/applicants?levelName=${encodeURIComponent(getSumsubLevelName())}`,
-      body: {
-        externalUserId,
-        email: application.email,
-        fixedInfo: {
-          firstName: application.full_name,
-        },
-      },
-    });
-
-    const applicantId = applicant?.id;
-    if (!applicantId) {
-      return res.status(500).json({ ok: false, error: "Failed to create Sumsub applicant" });
-    }
-
-    const updated = await safeQuery(
-      `
-      UPDATE applications
-      SET external_applicant_id = $2, updated_at = NOW()
-      WHERE id = $1
-      RETURNING *
-      `,
-      [applicationId, applicantId]
-    );
-
-    await safeQuery(
-      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
-      ["SUMSUB_APPLICANT_CREATED", { applicationId, applicantId }]
-    );
-
-    res.json({
-      ok: true,
-      applicantId,
-      application: updated.rows[0],
-    });
-  } catch (e) {
-    res.status(500).json(mapDbError(e));
-  }
-});
-
-app.post("/api/sumsub/access-token", async (req, res) => {
-  try {
-    const { applicationId } = req.body || {};
-    if (!applicationId) {
-      return res.status(400).json({ ok: false, error: "applicationId is required" });
-    }
-
-    const appRes = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [applicationId]);
-    if (!appRes.rows.length) {
-      return res.status(404).json({ ok: false, error: "Application not found" });
-    }
-
-    const application = appRes.rows[0];
-    const applicantId = application.external_applicant_id;
-
-    if (!applicantId) {
-      return res.status(400).json({
-        ok: false,
-        error: "No Sumsub applicant exists. Create applicant first.",
-      });
-    }
-
-    const tokenData = await sumsubRequest({
-      method: "POST",
-      path: "/resources/accessTokens/sdk",
-      body: {
-        userId: String(application.id),
-        applicantIdentifiers: {
-          email: application.email,
-        },
-        ttlInSecs: 1800,
-        levelName: getSumsubLevelName(),
-      },
-    });
-
-    res.json({
-      ok: true,
-      applicantId,
-      token: tokenData?.token,
-      userId: tokenData?.userId,
-    });
+    res.json({ ok: true, application: updated.rows[0] });
   } catch (e) {
     res.status(500).json(mapDbError(e));
   }
@@ -408,7 +430,6 @@ app.post("/api/sumsub/access-token", async (req, res) => {
 app.post("/api/applications/:id/start-kyc", async (req, res) => {
   try {
     const id = Number(req.params.id);
-
     const existing = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [id]);
     if (!existing.rows.length) {
       return res.status(404).json({ ok: false, error: "Application not found" });
@@ -438,10 +459,7 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
       const updatedApplicant = await safeQuery(
         `
         UPDATE applications
-        SET
-          external_applicant_id = $2,
-          kyc_status = 'IN_PROGRESS',
-          updated_at = NOW()
+        SET external_applicant_id = $2, kyc_status = 'IN_PROGRESS', updated_at = NOW()
         WHERE id = $1
         RETURNING *
         `,
@@ -450,14 +468,7 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
       application = updatedApplicant.rows[0];
     } else {
       const updatedApplicant = await safeQuery(
-        `
-        UPDATE applications
-        SET
-          kyc_status = 'IN_PROGRESS',
-          updated_at = NOW()
-        WHERE id = $1
-        RETURNING *
-        `,
+        `UPDATE applications SET kyc_status = 'IN_PROGRESS', updated_at = NOW() WHERE id = $1 RETURNING *`,
         [id]
       );
       application = updatedApplicant.rows[0];
@@ -468,24 +479,16 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
       path: "/resources/accessTokens/sdk",
       body: {
         userId: String(application.id),
-        applicantIdentifiers: {
-          email: application.email,
-        },
+        applicantIdentifiers: { email: application.email },
         ttlInSecs: 1800,
         levelName: getSumsubLevelName(),
       },
     });
 
-    await safeQuery(
-      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
-      [
-        "KYC_STARTED",
-        {
-          applicationId: id,
-          externalApplicantId: application.external_applicant_id,
-        },
-      ]
-    );
+    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
+      "KYC_STARTED",
+      { applicationId: id, externalApplicantId: application.external_applicant_id },
+    ]);
 
     res.json({
       ok: true,
@@ -501,69 +504,108 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
 
 app.post("/api/webhook/sumsub", async (req, res) => {
   try {
+    if (!verifyWebhookSignature(req)) {
+      return res.status(401).json({ ok: false, error: "Invalid webhook signature" });
+    }
+
     const payload = req.body || {};
     const applicantId = extractApplicantId(payload);
-
     if (!applicantId) {
       return res.status(400).json({ ok: false, error: "applicantId is required" });
     }
 
-    const verificationStatus = extractVerificationStatus(payload);
+    let verificationStatus = extractVerificationStatus(payload);
+    verificationStatus = deriveStrictVerification(payload, verificationStatus);
+
     const signals = buildSignalPayload(payload);
     const { score, reasons } = calculateRiskScore(signals);
 
     const appRes = await safeQuery(
-      `
-      SELECT *
-      FROM applications
-      WHERE external_applicant_id = $1
-      ORDER BY id DESC
-      LIMIT 1
-      `,
+      `SELECT * FROM applications WHERE external_applicant_id = $1 ORDER BY id DESC LIMIT 1`,
       [applicantId]
     );
-
     if (!appRes.rows.length) {
-      return res.status(404).json({
-        ok: false,
-        error: "Application not found for applicantId",
-      });
+      return res.status(404).json({ ok: false, error: "Application not found for applicantId" });
     }
 
     const application = appRes.rows[0];
     const riskTier = normalizeTier(application.risk_override_tier) || assignRiskTierFromScore(score);
-    const decisionStatus = determineKycDecision({
-      verificationStatus,
-      riskTier,
-    });
     const monitoringFrequency = monitoringFrequencyForTier(riskTier);
 
+    let decisionStatus = determineKycDecision({ verificationStatus, riskTier });
     let complianceStatus = "NOT_REQUIRED";
     let policyStatus = "NOT_STARTED";
     let customer = null;
     let contract = null;
+    let complianceReview = null;
 
     if (verificationStatus === "APPROVED") {
       if (riskTier === "LOW") {
+        decisionStatus = "AUTO_APPROVED";
         complianceStatus = "NOT_REQUIRED";
         policyStatus = "GENERATED";
+        customer = await ensureCustomer(application, applicantId, riskTier, score);
+        contract = await ensureContract(application, customer, applicantId, verificationStatus, monitoringFrequency);
       } else if (riskTier === "MEDIUM") {
-        complianceStatus = "NOT_REQUIRED";
+        decisionStatus = "STANDARD_MONITORING";
+        complianceStatus = "IN_REVIEW";
         policyStatus = "MONITORING_ONLY";
+        customer = await ensureCustomer(application, applicantId, riskTier, score);
+        await ensureMonitoring(customer.id, monitoringFrequency || "QUARTERLY");
+        complianceReview = await createComplianceReview(
+          application.id,
+          applicantId,
+          score,
+          riskTier,
+          reasons.join("; ") || "Medium-risk approved KYC requires compliance review"
+        );
       } else if (riskTier === "HIGH") {
+        decisionStatus = "MANUAL_REVIEW";
         complianceStatus = "IN_REVIEW";
         policyStatus = "ON_HOLD";
-      } else if (riskTier === "CRITICAL") {
+        complianceReview = await createComplianceReview(
+          application.id,
+          applicantId,
+          score,
+          riskTier,
+          reasons.join("; ") || "High-risk case sent to compliance review"
+        );
+      } else {
+        decisionStatus = "REJECT_ESCALATE";
         complianceStatus = "ESCALATED";
         policyStatus = "REJECTED";
+        complianceReview = await createComplianceReview(
+          application.id,
+          applicantId,
+          score,
+          "CRITICAL",
+          reasons.join("; ") || "Critical-risk case escalated"
+        );
       }
     } else if (verificationStatus === "REJECTED") {
+      decisionStatus = "REJECT_ESCALATE";
       complianceStatus = "REJECTED";
       policyStatus = "REJECTED";
+      complianceReview = await createComplianceReview(
+        application.id,
+        applicantId,
+        score,
+        riskTier,
+        reasons.join("; ") || "KYC rejected"
+      );
     } else if (verificationStatus === "REVIEW") {
+      decisionStatus = "MANUAL_REVIEW";
       complianceStatus = "IN_REVIEW";
       policyStatus = "ON_HOLD";
+      complianceReview = await createComplianceReview(
+        application.id,
+        applicantId,
+        score,
+        riskTier,
+        reasons.join("; ") || "Sent to review"
+      );
     } else {
+      decisionStatus = "PENDING";
       complianceStatus = "PENDING";
       policyStatus = "PENDING";
     }
@@ -595,160 +637,43 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       ]
     );
 
-    if (verificationStatus === "APPROVED" && (riskTier === "LOW" || riskTier === "MEDIUM")) {
-      const existingCustomer = await safeQuery(
-        `SELECT * FROM customers WHERE external_id = $1 ORDER BY id DESC LIMIT 1`,
-        [applicantId]
-      );
-
-      if (existingCustomer.rows.length) {
-        customer = existingCustomer.rows[0];
-      } else {
-        const customerRes = await safeQuery(
-          `
-          INSERT INTO customers (external_id, full_name, email, risk_tier, risk_score)
-          VALUES ($1, $2, $3, $4, $5)
-          RETURNING *
-          `,
-          [applicantId, application.full_name, application.email, riskTier, score]
-        );
-        customer = customerRes.rows[0];
-      }
-
-      await safeQuery(
-        `UPDATE applications SET customer_id = $2 WHERE id = $1`,
-        [application.id, customer.id]
-      );
-
-      if (riskTier === "LOW") {
-        const existingContract = await safeQuery(
-          `SELECT * FROM contracts WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
-          [customer.id]
-        );
-
-        if (existingContract.rows.length) {
-          contract = existingContract.rows[0];
-        } else {
-          const contractRes = await safeQuery(
-            `
-            INSERT INTO contracts (
-              customer_id,
-              policy_number,
-              status,
-              coverage_start,
-              coverage_end,
-              coverage_description,
-              coverage_limit,
-              deductible,
-              premium,
-              payment_frequency,
-              insurer,
-              insurer_address,
-              policyholder_address,
-              dob,
-              sumsub_verification_id,
-              sumsub_status,
-              sumsub_verified_at,
-              monitoring_frequency
-            )
-            VALUES (
-              $1, $2, $3,
-              NOW(),
-              NOW() + INTERVAL '1 year',
-              $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15
-            )
-            RETURNING *
-            `,
-            [
-              customer.id,
-              `POL-UK-${new Date().getFullYear()}-${String(customer.id).padStart(6, "0")}`,
-              "Generated",
-              "Comprehensive coverage for private motor vehicle including accidental damage, theft, and third-party liability.",
-              "£50,000",
-              "£500",
-              "£820",
-              "Monthly",
-              "Northern Shield Insurance Ltd",
-              "42 Bishopsgate, London, UK",
-              "14 Kingsway Avenue, Manchester, UK",
-              "1985-07-21",
-              applicantId,
-              verificationStatus,
-              monitoringFrequency || "12_MONTHS",
-            ]
-          );
-          contract = contractRes.rows[0];
-        }
-
-        await safeQuery(
-          `UPDATE applications SET contract_id = $2 WHERE id = $1`,
-          [application.id, contract.id]
-        );
-      }
-
-      if (monitoringFrequency) {
-        const monitoringCheck = await safeQuery(
-          `SELECT * FROM monitoring WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
-          [customer.id]
-        );
-
-        if (!monitoringCheck.rows.length) {
-          await safeQuery(
-            `INSERT INTO monitoring (customer_id, frequency) VALUES ($1, $2)`,
-            [customer.id, monitoringFrequency]
-          );
-        }
-      }
+    if (customer) {
+      await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [application.id, customer.id]);
+    }
+    if (contract) {
+      await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [application.id, contract.id]);
     }
 
-    if (
-      riskTier === "MEDIUM" ||
-      riskTier === "HIGH" ||
-      riskTier === "CRITICAL" ||
-      verificationStatus === "REVIEW"
-    ) {
-      await safeQuery(
-        `
-        INSERT INTO compliance_reviews (
-          application_id,
-          applicant_id,
-          risk_score,
-          risk_tier,
-          status,
-          reason
-        )
-        VALUES ($1, $2, $3, $4, $5, $6)
-        `,
-        [application.id, applicantId, score, riskTier, "PENDING_REVIEW", reasons.join("; ")]
-      );
-    }
-
-    await safeQuery(
-      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
-      [
-        "SUMSUB_WEBHOOK_PROCESSED",
-        {
-          applicationId: application.id,
-          applicantId,
-          verificationStatus,
-          payloadType: payload.type || null,
-          score,
-          riskTier,
-          reasons,
-          decisionStatus,
-        },
-      ]
-    );
+    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
+      "SUMSUB_WEBHOOK_PROCESSED",
+      {
+        applicationId: application.id,
+        applicantId,
+        verificationStatus,
+        payloadType: payload.type || null,
+        score,
+        riskTier,
+        reasons,
+        decisionStatus,
+      },
+    ]);
 
     res.json({
       ok: true,
       application: updatedApp.rows[0],
       customer,
       contract,
+      complianceReview,
       score,
       riskTier,
       reasons,
       verificationStatus,
+      nextView:
+        riskTier === "LOW" && contract
+          ? "contracts"
+          : riskTier === "MEDIUM" || riskTier === "HIGH" || riskTier === "CRITICAL"
+          ? "reviews"
+          : "verified",
     });
   } catch (e) {
     console.error("Sumsub webhook error:", e);
@@ -760,6 +685,25 @@ app.get("/api/customers", async (req, res) => {
   try {
     const result = await safeQuery(`SELECT * FROM customers ORDER BY created_at DESC`);
     res.json({ ok: true, customers: result.rows || [] });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.get("/api/customers/:id", async (req, res) => {
+  try {
+    const customerRes = await safeQuery(`SELECT * FROM customers WHERE id = $1`, [req.params.id]);
+    if (!customerRes.rows.length) return res.status(404).json({ ok: false, error: "Customer not found" });
+
+    const contracts = await safeQuery(`SELECT * FROM contracts WHERE customer_id = $1 ORDER BY created_at DESC`, [req.params.id]);
+    const monitoring = await safeQuery(`SELECT * FROM monitoring WHERE customer_id = $1 ORDER BY created_at DESC`, [req.params.id]);
+
+    res.json({
+      ok: true,
+      customer: customerRes.rows[0],
+      contracts: contracts.rows || [],
+      monitoring: monitoring.rows || [],
+    });
   } catch (e) {
     res.status(500).json(mapDbError(e));
   }
@@ -779,10 +723,83 @@ app.get("/api/contracts", async (req, res) => {
   }
 });
 
+app.post("/api/contracts/:id/regenerate", async (req, res) => {
+  try {
+    const result = await safeQuery(`UPDATE contracts SET created_at = NOW() WHERE id = $1 RETURNING *`, [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ ok: false, error: "Contract not found" });
+
+    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
+      "CONTRACT_REGENERATED",
+      { contractId: req.params.id },
+    ]);
+
+    res.json({ ok: true, contract: result.rows[0] });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
 app.get("/api/compliance-reviews", async (req, res) => {
   try {
     const result = await safeQuery(`SELECT * FROM compliance_reviews ORDER BY created_at DESC`);
     res.json({ ok: true, reviews: result.rows || [] });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.post("/api/compliance-reviews/:id/action", async (req, res) => {
+  try {
+    const action = String(req.body?.action || "").toUpperCase();
+    const allowed = ["APPROVE", "REJECT", "DONE", "ESCALATE", "START"];
+    if (!allowed.includes(action)) {
+      return res.status(400).json({ ok: false, error: "Invalid action" });
+    }
+
+    const reviewRes = await safeQuery(`SELECT * FROM compliance_reviews WHERE id = $1`, [req.params.id]);
+    if (!reviewRes.rows.length) return res.status(404).json({ ok: false, error: "Review not found" });
+    const review = reviewRes.rows[0];
+
+    let reviewStatus = review.status;
+    let appCompliance = null;
+    let appPolicy = null;
+
+    if (action === "START") reviewStatus = "IN_PROGRESS";
+    if (action === "DONE") reviewStatus = "DONE";
+    if (action === "ESCALATE") {
+      reviewStatus = "ESCALATED";
+      appCompliance = "ESCALATED";
+      appPolicy = "ON_HOLD";
+    }
+    if (action === "APPROVE") {
+      reviewStatus = "APPROVED";
+      appCompliance = "APPROVED";
+      appPolicy = "MONITORING_ONLY";
+    }
+    if (action === "REJECT") {
+      reviewStatus = "REJECTED";
+      appCompliance = "REJECTED";
+      appPolicy = "REJECTED";
+    }
+
+    const updatedReview = await safeQuery(
+      `UPDATE compliance_reviews SET status = $2 WHERE id = $1 RETURNING *`,
+      [req.params.id, reviewStatus]
+    );
+
+    if (appCompliance || appPolicy) {
+      await safeQuery(
+        `UPDATE applications SET compliance_status = COALESCE($2, compliance_status), policy_status = COALESCE($3, policy_status), updated_at = NOW() WHERE id = $1`,
+        [review.application_id, appCompliance, appPolicy]
+      );
+    }
+
+    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
+      "COMPLIANCE_REVIEW_ACTION",
+      { reviewId: req.params.id, action },
+    ]);
+
+    res.json({ ok: true, review: updatedReview.rows[0] });
   } catch (e) {
     res.status(500).json(mapDbError(e));
   }
@@ -803,14 +820,43 @@ app.get("/api/verified-results", async (req, res) => {
   }
 });
 
-app.get("/api/audits", async (req, res) => {
+app.get("/api/monitoring", async (req, res) => {
   try {
     const result = await safeQuery(`
-      SELECT *
-      FROM audit_logs
-      ORDER BY created_at DESC
-      LIMIT 100
+      SELECT m.*, c.full_name, c.email, c.risk_tier
+      FROM monitoring m
+      LEFT JOIN customers c ON c.id = m.customer_id
+      ORDER BY m.created_at DESC
     `);
+    res.json({ ok: true, monitoring: result.rows || [] });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.post("/api/monitoring/:id/action", async (req, res) => {
+  try {
+    const action = String(req.body?.action || "").toUpperCase();
+    const allowed = ["COMPLETE", "SNOOZE"];
+    if (!allowed.includes(action)) return res.status(400).json({ ok: false, error: "Invalid action" });
+
+    let sql =
+      action === "COMPLETE"
+        ? `UPDATE monitoring SET status = 'COMPLETED', next_review_at = NOW() + INTERVAL '90 days' WHERE id = $1 RETURNING *`
+        : `UPDATE monitoring SET status = 'SNOOZED', next_review_at = NOW() + INTERVAL '30 days' WHERE id = $1 RETURNING *`;
+
+    const updated = await safeQuery(sql, [req.params.id]);
+    if (!updated.rows.length) return res.status(404).json({ ok: false, error: "Monitoring record not found" });
+
+    res.json({ ok: true, monitoring: updated.rows[0] });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.get("/api/audits", async (req, res) => {
+  try {
+    const result = await safeQuery(`SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100`);
     res.json({ ok: true, audits: result.rows || [] });
   } catch (e) {
     res.status(500).json(mapDbError(e));
@@ -820,7 +866,6 @@ app.get("/api/audits", async (req, res) => {
 app.get("/api/contracts/:id/pdf", async (req, res) => {
   try {
     const contractRes = await safeQuery(`SELECT * FROM contracts WHERE id = $1`, [req.params.id]);
-
     if (!contractRes.rows.length) {
       return res.status(404).json({ ok: false, error: "Contract not found" });
     }
@@ -831,18 +876,11 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
 
     let application = {};
     if (customer?.id) {
-      const appRes = await safeQuery(
-        `SELECT * FROM applications WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
-        [customer.id]
-      );
+      const appRes = await safeQuery(`SELECT * FROM applications WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`, [customer.id]);
       application = appRes.rows[0] || {};
     }
 
-    const pdfBuffer = await generateContractPDF({
-      customer,
-      contract,
-      application,
-    });
+    const pdfBuffer = await generateContractPDF({ customer, contract, application });
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${contract.policy_number}.pdf"`);

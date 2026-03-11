@@ -27,9 +27,7 @@ export async function listApplications() {
 }
 
 export async function startKyc(id) {
-  return jsonFetch(`/api/applications/${id}/start-kyc`, {
-    method: "POST",
-  });
+  return jsonFetch(`/api/applications/${id}/start-kyc`, { method: "POST" });
 }
 
 export async function sendSumsubWebhook(payload) {
@@ -48,12 +46,28 @@ export async function listCustomers() {
   return jsonFetch("/api/customers");
 }
 
+export async function getCustomer(id) {
+  return jsonFetch(`/api/customers/${id}`);
+}
+
 export async function listContracts() {
   return jsonFetch("/api/contracts");
 }
 
+export async function regenerateContract(id) {
+  return jsonFetch(`/api/contracts/${id}/regenerate`, { method: "POST" });
+}
+
 export async function listComplianceReviews() {
   return jsonFetch("/api/compliance-reviews");
+}
+
+export async function actOnComplianceReview(id, action) {
+  return jsonFetch(`/api/compliance-reviews/${id}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
 }
 
 export async function listVerifiedResults() {
@@ -65,6 +79,18 @@ export async function overrideRiskTier(applicationId, riskTier) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ riskTier }),
+  });
+}
+
+export async function listMonitoring() {
+  return jsonFetch("/api/monitoring");
+}
+
+export async function actOnMonitoring(id, action) {
+  return jsonFetch(`/api/monitoring/${id}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
   });
 }
 

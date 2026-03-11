@@ -18,11 +18,7 @@ function safe(value, fallback = "-") {
 function generateContractPDF({ customer = {}, contract = {}, application = {} }) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({
-        margin: 36,
-        size: "A4",
-      });
-
+      const doc = new PDFDocument({ margin: 36, size: "A4" });
       const chunks = [];
       doc.on("data", (chunk) => chunks.push(chunk));
       doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -34,16 +30,11 @@ function generateContractPDF({ customer = {}, contract = {}, application = {} })
       const policyIssueDate = formatDate(contract.created_at || new Date());
 
       const policyholderName = safe(customer.full_name || application.full_name, "Policyholder");
-      const policyholderAddress = safe(
-        contract.policyholder_address || application.address,
-        "Address not provided"
-      );
+      const policyholderAddress = safe(contract.policyholder_address || application.address, "Address not provided");
       const policyholderDob = formatDate(contract.dob || application.date_of_birth || new Date());
 
       const coverageStartDate = formatDate(contract.coverage_start || new Date());
-      const coverageEndDate = formatDate(
-        contract.coverage_end || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
-      );
+      const coverageEndDate = formatDate(contract.coverage_end || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000));
       const coverageDescription = safe(
         contract.coverage_description,
         "Comprehensive coverage for accidental damage, theft, and third-party liability."
@@ -64,13 +55,7 @@ function generateContractPDF({ customer = {}, contract = {}, application = {} })
       );
 
       const riskTier = safe(customer.risk_tier || application.risk_tier, "Medium");
-      const monitoringFrequency = safe(
-        contract.monitoring_frequency || application.monitoring_frequency,
-        "Quarterly"
-      );
-
-      const representative = "Sarah Bennett – Senior Underwriter";
-      const agreementDate = formatDate(contract.created_at || new Date());
+      const monitoringFrequency = safe(contract.monitoring_frequency || application.monitoring_frequency, "Quarterly");
 
       function pageBg() {
         doc.rect(0, 0, doc.page.width, doc.page.height).fill("#ececec");
@@ -80,9 +65,7 @@ function generateContractPDF({ customer = {}, contract = {}, application = {} })
       }
 
       pageBg();
-      doc.font("Helvetica-Bold").fontSize(20).text("Insurance Policy Agreement", 0, 50, {
-        align: "center",
-      });
+      doc.font("Helvetica-Bold").fontSize(20).text("Insurance Policy Agreement", 0, 50, { align: "center" });
 
       let y = 105;
       const leftX = 60;
@@ -114,12 +97,7 @@ function generateContractPDF({ customer = {}, contract = {}, application = {} })
       y += 22;
       doc.text("Coverage Description:", leftX, y);
       y += 18;
-      doc.text(coverageDescription, leftX, y, {
-        width: 470,
-        height: 42,
-        ellipsis: true,
-        lineGap: 2,
-      });
+      doc.text(coverageDescription, leftX, y, { width: 470, height: 42, ellipsis: true, lineGap: 2 });
       y += 40;
       doc.text(`Coverage Limit: ${coverageLimit}`, leftX, y);
       y += 18;
@@ -163,28 +141,24 @@ function generateContractPDF({ customer = {}, contract = {}, application = {} })
       y += 75;
       doc.font("Helvetica-Bold").fontSize(14).text("Claims", 60, y);
       y += 24;
-      doc.font("Helvetica").fontSize(10.5).text(
-        "Claims must be reported within 30 days of the incident.",
-        60,
-        y,
-        { width: 470, lineGap: 3 }
-      );
+      doc.font("Helvetica").fontSize(10.5).text("Claims must be reported within 30 days of the incident.", 60, y, {
+        width: 470,
+        lineGap: 3,
+      });
       y += 20;
-      doc.text(
-        "Claims may be subject to investigation if anomalies or fraud indicators are detected.",
-        60,
-        y,
-        { width: 470, lineGap: 3 }
-      );
+      doc.text("Claims may be subject to investigation if anomalies or fraud indicators are detected.", 60, y, {
+        width: 470,
+        lineGap: 3,
+      });
 
       y += 70;
       doc.font("Helvetica-Bold").fontSize(14).text("Agreement", 60, y);
       y += 24;
-      doc.font("Helvetica").fontSize(10.5).text(`Insurer Representative: ${representative}`, 60, y);
+      doc.font("Helvetica").fontSize(10.5).text("Insurer Representative: Sarah Bennett – Senior Underwriter", 60, y);
       y += 26;
       doc.text(`Policyholder: ${policyholderName}`, 60, y);
       y += 26;
-      doc.text(`Date: ${agreementDate}`, 60, y);
+      doc.text(`Date: ${formatDate(contract.created_at || new Date())}`, 60, y);
 
       doc.end();
     } catch (err) {

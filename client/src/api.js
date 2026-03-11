@@ -14,10 +14,6 @@ export async function getSummary() {
   return jsonFetch("/api/summary");
 }
 
-export async function triggerDemo() {
-  return jsonFetch("/api/demo/trigger", { method: "POST" });
-}
-
 export async function createApplication(payload) {
   return jsonFetch("/api/applications", {
     method: "POST",
@@ -44,19 +40,16 @@ export async function sendSumsubWebhook(payload) {
   });
 }
 
-export async function listAudits({ limit = 25, offset = 0, q = "" } = {}) {
-  const qs = new URLSearchParams({ limit, offset, q });
-  return jsonFetch(`/api/audits?${qs.toString()}`);
+export async function listAudits() {
+  return jsonFetch("/api/audits");
 }
 
-export async function listCustomers({ limit = 50, offset = 0 } = {}) {
-  const qs = new URLSearchParams({ limit, offset });
-  return jsonFetch(`/api/customers?${qs.toString()}`);
+export async function listCustomers() {
+  return jsonFetch("/api/customers");
 }
 
-export async function listContracts({ limit = 50, offset = 0 } = {}) {
-  const qs = new URLSearchParams({ limit, offset });
-  return jsonFetch(`/api/contracts?${qs.toString()}`);
+export async function listContracts() {
+  return jsonFetch("/api/contracts");
 }
 
 export async function listComplianceReviews() {
@@ -67,22 +60,14 @@ export async function listVerifiedResults() {
   return jsonFetch("/api/verified-results");
 }
 
+export async function overrideRiskTier(applicationId, riskTier) {
+  return jsonFetch(`/api/applications/${applicationId}/risk-tier`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ riskTier }),
+  });
+}
+
 export function contractPdfUrl(id) {
   return `/api/contracts/${id}/pdf`;
-}
-
-export async function createSumsubApplicant(applicationId) {
-  return jsonFetch("/api/sumsub/applicant", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ applicationId }),
-  });
-}
-
-export async function getSumsubAccessToken(applicationId) {
-  return jsonFetch("/api/sumsub/access-token", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ applicationId }),
-  });
 }

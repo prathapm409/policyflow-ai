@@ -47,6 +47,12 @@ function normalizeVerificationStatus(input) {
   return "PENDING";
 }
 
+function normalizeTier(input) {
+  const value = String(input || "").trim().toUpperCase();
+  if (["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(value)) return value;
+  return null;
+}
+
 function buildSignalPayload(payload = {}) {
   return {
     pepMatch: Boolean(payload.pepMatch),
@@ -133,7 +139,8 @@ app.get("/api/applications", async (req, res) => {
         customer_id,
         contract_id,
         created_at,
-        updated_at
+        updated_at,
+        risk_override_tier
       FROM applications
       ORDER BY id DESC
     `);
@@ -183,6 +190,50 @@ app.post("/api/applications", async (req, res) => {
     );
 
     res.json({ ok: true, application: result.rows[0] });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.post("/api/applications/:id/risk-tier", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const overrideTier = normalizeTier(req.body?.riskTier);
+
+    if (!overrideTier) {
+      return res.status(400).json({
+        ok: false,
+        error: "riskTier must be one of LOW, MEDIUM, HIGH, CRITICAL",
+      });
+    }
+
+    const existing = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [id]);
+    if (!existing.rows.length) {
+      return res.status(404).json({ ok: false, error: "Application not found" });
+    }
+
+    const updated = await safeQuery(
+      `
+      UPDATE applications
+      SET
+        risk_override_tier = $2,
+        risk_tier = $2,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+      `,
+      [id, overrideTier]
+    );
+
+    await safeQuery(
+      `INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`,
+      ["RISK_TIER_OVERRIDDEN", { applicationId: id, riskTier: overrideTier }]
+    );
+
+    res.json({
+      ok: true,
+      application: updated.rows[0],
+    });
   } catch (e) {
     res.status(500).json(mapDbError(e));
   }
@@ -266,8 +317,8 @@ app.post("/api/sumsub/access-token", async (req, res) => {
     }
 
     const application = appRes.rows[0];
-
     const applicantId = application.external_applicant_id;
+
     if (!applicantId) {
       return res.status(400).json({
         ok: false,
@@ -409,12 +460,6 @@ app.post("/api/webhook/sumsub", async (req, res) => {
 
     const signals = buildSignalPayload(payload);
     const { score, reasons } = calculateRiskScore(signals);
-    const riskTier = assignRiskTierFromScore(score);
-    const decisionStatus = determineKycDecision({
-      verificationStatus,
-      riskTier,
-    });
-    const monitoringFrequency = monitoringFrequencyForTier(riskTier);
 
     const appRes = await safeQuery(
       `
@@ -435,6 +480,12 @@ app.post("/api/webhook/sumsub", async (req, res) => {
     }
 
     const application = appRes.rows[0];
+    const riskTier = normalizeTier(application.risk_override_tier) || assignRiskTierFromScore(score);
+    const decisionStatus = determineKycDecision({
+      verificationStatus,
+      riskTier,
+    });
+    const monitoringFrequency = monitoringFrequencyForTier(riskTier);
 
     let complianceStatus = "NOT_REQUIRED";
     let policyStatus = "NOT_STARTED";
@@ -724,15 +775,15 @@ app.get("/api/contracts/:id/pdf", async (req, res) => {
 
     const contract = contractRes.rows[0];
     const customerRes = await safeQuery(`SELECT * FROM customers WHERE id = $1`, [contract.customer_id]);
-    const customer = customerRes.rows[0] || null;
+    const customer = customerRes.rows[0] || {};
 
-    let application = null;
-    if (customer) {
+    let application = {};
+    if (customer?.id) {
       const appRes = await safeQuery(
         `SELECT * FROM applications WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
         [customer.id]
       );
-      application = appRes.rows[0] || null;
+      application = appRes.rows[0] || {};
     }
 
     const pdfBuffer = await generateContractPDF({

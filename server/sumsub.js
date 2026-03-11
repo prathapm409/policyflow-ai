@@ -13,10 +13,7 @@ function signSumsubRequest({ ts, method, path, body, secret }) {
   const signingSecret = secret || process.env.SUMSUB_SECRET_KEY || "";
   const rawBody = body || "";
   const payload = `${ts}${method.toUpperCase()}${path}${rawBody}`;
-  return crypto
-    .createHmac("sha256", signingSecret)
-    .update(payload)
-    .digest("hex");
+  return crypto.createHmac("sha256", signingSecret).update(payload).digest("hex");
 }
 
 async function sumsubRequest({ method, path, body }) {
@@ -32,11 +29,9 @@ async function sumsubRequest({ method, path, body }) {
     secret,
   });
 
-  const url = `${SUMSUB_BASE_URL}${path}`;
-
   const response = await axios({
     method,
-    url,
+    url: `${SUMSUB_BASE_URL}${path}`,
     data: body,
     headers: {
       "X-App-Token": appToken,

@@ -33,12 +33,12 @@ function generateContractPDF({ customer = {}, contract = {}, application = {} })
       const policyNumber = safe(contract.policy_number, "POL-UK-2026-000384");
       const policyIssueDate = formatDate(contract.created_at || new Date());
 
-      const policyholderName = safe(customer.full_name || application.full_name, "James Carter");
+      const policyholderName = safe(customer.full_name || application.full_name, "Policyholder");
       const policyholderAddress = safe(
         contract.policyholder_address || application.address,
-        "14 Kingsway Avenue, Manchester, UK"
+        "Address not provided"
       );
-      const policyholderDob = formatDate(contract.dob || application.date_of_birth || "1985-07-21");
+      const policyholderDob = formatDate(contract.dob || application.date_of_birth || new Date());
 
       const coverageStartDate = formatDate(contract.coverage_start || new Date());
       const coverageEndDate = formatDate(
@@ -46,7 +46,7 @@ function generateContractPDF({ customer = {}, contract = {}, application = {} })
       );
       const coverageDescription = safe(
         contract.coverage_description,
-        "Comprehensive coverage for private motor vehicle including accidental damage, theft and third-party liability."
+        "Comprehensive coverage for accidental damage, theft, and third-party liability."
       );
 
       const coverageLimit = safe(contract.coverage_limit, "£50,000");
@@ -56,9 +56,9 @@ function generateContractPDF({ customer = {}, contract = {}, application = {} })
 
       const verificationId = safe(
         contract.sumsub_verification_id || customer.external_id || application.external_applicant_id,
-        "SUM-93840294"
+        "N/A"
       );
-      const verificationStatus = safe(contract.sumsub_status || application.kyc_status, "Approved");
+      const verificationStatus = safe(contract.sumsub_status || application.kyc_status, "Pending");
       const verificationDate = formatDate(
         contract.sumsub_verified_at || application.updated_at || contract.created_at || new Date()
       );

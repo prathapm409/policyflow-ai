@@ -19,7 +19,7 @@ app.use(cors());
 app.use(express.json());
 
 function getSumsubLevelName() {
-  return process.env.SUMSUB_LEVEL_NAME || "basic-kyc-level";
+  return process.env.SUMSUB_LEVEL_NAME || "id-and-liveness";
 }
 
 function mapDbError(error) {
@@ -42,8 +42,9 @@ async function safeQuery(sql, params = []) {
 function normalizeVerificationStatus(input) {
   const value = String(input || "").trim().toUpperCase();
   if (["APPROVED", "REJECTED", "PENDING", "REVIEW"].includes(value)) return value;
-  if (value === "GREEN") return "APPROVED";
-  if (value === "RED") return "REJECTED";
+  if (["GREEN", "COMPLETED"].includes(value)) return "APPROVED";
+  if (["RED", "FAILED"].includes(value)) return "REJECTED";
+  if (["ON_HOLD", "ONHOLD"].includes(value)) return "REVIEW";
   return "PENDING";
 }
 
@@ -53,16 +54,70 @@ function normalizeTier(input) {
   return null;
 }
 
+function extractApplicantId(payload = {}) {
+  return (
+    payload.applicantId ||
+    payload.externalApplicantId ||
+    payload.applicant_id ||
+    null
+  );
+}
+
+function extractVerificationStatus(payload = {}) {
+  const direct =
+    payload.status ||
+    payload.reviewStatus ||
+    payload.verificationStatus ||
+    payload.reviewResult?.reviewAnswer ||
+    null;
+
+  if (direct) {
+    return normalizeVerificationStatus(direct);
+  }
+
+  const type = String(payload.type || "").trim();
+  if (type === "applicantPending") return "PENDING";
+  if (type === "applicantOnHold") return "REVIEW";
+  if (type === "applicantReviewed" || type === "applicantWorkflowCompleted") {
+    return normalizeVerificationStatus(payload.reviewResult?.reviewAnswer || "PENDING");
+  }
+  return "PENDING";
+}
+
 function buildSignalPayload(payload = {}) {
+  const labels = []
+    .concat(payload?.reviewResult?.rejectLabels || [])
+    .concat(payload?.sumsubRejectLabels || [])
+    .map((x) => String(x).toUpperCase());
+
+  const hasLabel = (needle) => labels.some((x) => x.includes(needle));
+
   return {
-    pepMatch: Boolean(payload.pepMatch),
-    sanctionsMatch: Boolean(payload.sanctionsMatch),
-    adverseMedia: Boolean(payload.adverseMedia),
-    documentFraudDetected: Boolean(payload.documentFraudDetected),
-    faceMismatch: Boolean(payload.faceMismatch),
-    highRiskCountry: Boolean(payload.highRiskCountry),
-    deviceOrIpMismatch: Boolean(payload.deviceOrIpMismatch),
-    manualReviewRequired: Boolean(payload.manualReviewRequired),
+    pepMatch: Boolean(payload.pepMatch) || hasLabel("PEP"),
+    sanctionsMatch: Boolean(payload.sanctionsMatch) || hasLabel("SANCTION") || hasLabel("WATCHLIST"),
+    adverseMedia: Boolean(payload.adverseMedia) || hasLabel("ADVERSE"),
+    documentFraudDetected:
+      Boolean(payload.documentFraudDetected) ||
+      hasLabel("TAMPER") ||
+      hasLabel("FRAUD") ||
+      hasLabel("FORGERY"),
+    faceMismatch:
+      Boolean(payload.faceMismatch) ||
+      hasLabel("FACE") ||
+      hasLabel("MISMATCH") ||
+      hasLabel("LIVENESS"),
+    highRiskCountry:
+      Boolean(payload.highRiskCountry) ||
+      hasLabel("COUNTRY") ||
+      hasLabel("HIGH_RISK_COUNTRY"),
+    deviceOrIpMismatch:
+      Boolean(payload.deviceOrIpMismatch) ||
+      hasLabel("DEVICE") ||
+      hasLabel("IP"),
+    manualReviewRequired:
+      Boolean(payload.manualReviewRequired) ||
+      String(payload.reviewStatus || "").toLowerCase() === "pending" ||
+      String(payload.reviewStatus || "").toLowerCase() === "onhold",
   };
 }
 
@@ -447,17 +502,13 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
 app.post("/api/webhook/sumsub", async (req, res) => {
   try {
     const payload = req.body || {};
-    const applicantId =
-      payload.applicantId || payload.externalApplicantId || payload.applicant_id || null;
+    const applicantId = extractApplicantId(payload);
 
     if (!applicantId) {
       return res.status(400).json({ ok: false, error: "applicantId is required" });
     }
 
-    const verificationStatus = normalizeVerificationStatus(
-      payload.status || payload.reviewStatus || payload.verificationStatus
-    );
-
+    const verificationStatus = extractVerificationStatus(payload);
     const signals = buildSignalPayload(payload);
     const { score, reasons } = calculateRiskScore(signals);
 
@@ -680,7 +731,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
           applicationId: application.id,
           applicantId,
           verificationStatus,
-          signals,
+          payloadType: payload.type || null,
           score,
           riskTier,
           reasons,
@@ -697,9 +748,10 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       score,
       riskTier,
       reasons,
-      signals,
+      verificationStatus,
     });
   } catch (e) {
+    console.error("Sumsub webhook error:", e);
     res.status(500).json(mapDbError(e));
   }
 });

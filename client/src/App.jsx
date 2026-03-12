@@ -281,6 +281,7 @@ export default function App() {
   );
 
   const riskPreview = useMemo(() => calcRisk(signals), [signals]);
+  const latestContract = contracts[0] || null;
 
   async function openLatestCustomerDetail(customerIdFromResponse = null) {
     const customersRes = await listCustomers();
@@ -423,15 +424,7 @@ export default function App() {
     } catch {
       const fallbackTier = calcRisk(signals).tier;
       setProcessResult({ riskTier: fallbackTier, customerId: null });
-
-      if (fallbackTier === "LOW") {
-        setInfo("LOW process preview shown.");
-      } else if (fallbackTier === "MEDIUM") {
-        setInfo("MEDIUM process preview shown.");
-      } else {
-        setInfo(`${fallbackTier} process preview shown.`);
-      }
-
+      setInfo(`${fallbackTier} process preview shown.`);
       setTab("workflow");
     } finally {
       setBusy(false);
@@ -496,8 +489,6 @@ export default function App() {
   function toggleSignal(key) {
     setSignals((prev) => ({ ...prev, [key]: !prev[key] }));
   }
-
-  const latestContract = contracts[0] || null;
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #031133 0%, #081634 30%, #0d1730 100%)", color: "#fff", fontFamily: "Inter, Arial, sans-serif", padding: 18 }}>
@@ -605,12 +596,55 @@ export default function App() {
         </>
       )}
 
-      {!loading && tab === "reviews" && (
-        <Section title="Compliance Review To-Do Page" subtitle="Medium, high and critical review queue.">
-          {!reviews.length ? <EmptyState title="No compliance review items" subtitle="Use medium/high/critical process in Workflow tab." /> : (
+      {!loading && tab === "verified" && (
+        <Section title="Verified Results" subtitle="Verification results list.">
+          {!verifiedResults.length ? (
+            <EmptyState title="No verified results yet" subtitle="Use Workflow tab and Apply Verification Result." />
+          ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
-                <thead><tr><th style={thtd}>Applicant ID</th><th style={thtd}>Risk Tier</th><th style={thtd}>Status</th><th style={thtd}>Reason</th><th style={thtd}>Actions</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th style={thtd}>Name</th>
+                    <th style={thtd}>Email</th>
+                    <th style={thtd}>KYC</th>
+                    <th style={thtd}>Risk Tier</th>
+                    <th style={thtd}>Decision</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {verifiedResults.map((r) => (
+                    <tr key={r.id}>
+                      <td style={thtd}>{r.full_name}</td>
+                      <td style={thtd}>{r.email}</td>
+                      <td style={thtd}>{prettyStatus(r.kyc_status)}</td>
+                      <td style={thtd}>{prettyStatus(r.risk_tier)}</td>
+                      <td style={thtd}>{prettyStatus(r.decision_status)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {!loading && tab === "reviews" && (
+        <Section title="Compliance Review To-Do Page" subtitle="Medium, high and critical review queue.">
+          {!reviews.length ? (
+            <EmptyState title="No compliance review items" subtitle="Use medium/high/critical process in Workflow tab." />
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    <th style={thtd}>Applicant ID</th>
+                    <th style={thtd}>Risk Tier</th>
+                    <th style={thtd}>Status</th>
+                    <th style={thtd}>Reason</th>
+                    <th style={thtd}>Actions</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {reviews.map((r) => (
                     <tr key={r.id}>
@@ -634,9 +668,81 @@ export default function App() {
         </Section>
       )}
 
+      {!loading && tab === "monitoring" && (
+        <Section title="Monitoring" subtitle="Monitoring queue.">
+          {!monitoring.length ? (
+            <EmptyState title="No monitoring items yet" subtitle="Monitoring records will appear here when created." />
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    <th style={thtd}>Customer</th>
+                    <th style={thtd}>Email</th>
+                    <th style={thtd}>Risk Tier</th>
+                    <th style={thtd}>Frequency</th>
+                    <th style={thtd}>Status</th>
+                    <th style={thtd}>Next Review</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monitoring.map((m) => (
+                    <tr key={m.id}>
+                      <td style={thtd}>{m.full_name}</td>
+                      <td style={thtd}>{m.email}</td>
+                      <td style={thtd}>{prettyStatus(m.risk_tier)}</td>
+                      <td style={thtd}>{m.frequency}</td>
+                      <td style={thtd}>{m.status}</td>
+                      <td style={thtd}>{m.next_review_at ? new Date(m.next_review_at).toLocaleString() : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {!loading && tab === "customers" && (
+        <Section title="Customers" subtitle="Created customers.">
+          {!customers.length ? (
+            <EmptyState title="No customers yet" subtitle="Create using low or medium flow." />
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    <th style={thtd}>Name</th>
+                    <th style={thtd}>Email</th>
+                    <th style={thtd}>Risk Tier</th>
+                    <th style={thtd}>Risk Score</th>
+                    <th style={thtd}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {customers.map((c) => (
+                    <tr key={c.id}>
+                      <td style={thtd}>{c.full_name}</td>
+                      <td style={thtd}>{c.email}</td>
+                      <td style={thtd}>{prettyStatus(c.risk_tier)}</td>
+                      <td style={thtd}>{c.risk_score ?? 0}</td>
+                      <td style={thtd}>
+                        <button style={smallBtn} onClick={() => onOpenCustomer(c.id)}>Open</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+      )}
+
       {!loading && tab === "customer-detail" && (
         <Section title="Customer Detail Page" subtitle="Latest customer on top by default." right={<button style={smallBtn} onClick={() => setTab("contracts")}>Go To Contracts Screen</button>}>
-          {!selectedCustomer?.customer ? <EmptyState title="No customer selected" subtitle="Open from Customers tab." /> : (
+          {!selectedCustomer?.customer ? (
+            <EmptyState title="No customer selected" subtitle="Open from Customers tab." />
+          ) : (
             <>
               <div style={{ ...panelStyle, marginBottom: 16 }}>
                 <h3 style={h3Style}>{selectedCustomer.customer.full_name}</h3>
@@ -649,16 +755,28 @@ export default function App() {
               </div>
 
               <Section title="Customer Contracts" subtitle="Generated contract list for this customer.">
-                {!selectedCustomer.contracts?.length ? <EmptyState title="No contracts" subtitle="No contracts available for this customer." /> : (
+                {!selectedCustomer.contracts?.length ? (
+                  <EmptyState title="No contracts" subtitle="No contracts available for this customer." />
+                ) : (
                   <div style={{ overflowX: "auto" }}>
                     <table style={tableStyle}>
-                      <thead><tr><th style={thtd}>Policy Number</th><th style={thtd}>Status</th><th style={thtd}>PDF</th></tr></thead>
+                      <thead>
+                        <tr>
+                          <th style={thtd}>Policy Number</th>
+                          <th style={thtd}>Status</th>
+                          <th style={thtd}>PDF</th>
+                        </tr>
+                      </thead>
                       <tbody>
                         {selectedCustomer.contracts.map((c) => (
                           <tr key={c.id}>
                             <td style={thtd}>{c.policy_number}</td>
                             <td style={thtd}>{c.status}</td>
-                            <td style={thtd}><a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>Open PDF</a></td>
+                            <td style={thtd}>
+                              <a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>
+                                Open PDF
+                              </a>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -673,17 +791,32 @@ export default function App() {
 
       {!loading && tab === "contracts" && (
         <Section title="Contracts Screen" subtitle="Generated contracts list." right={latestContract ? <Badge bg="#dbeafe" color="#1e3a8a">{latestContract.policy_number}</Badge> : null}>
-          {!contracts.length ? <EmptyState title="No contracts yet" subtitle="Low-risk path creates contracts." /> : (
+          {!contracts.length ? (
+            <EmptyState title="No contracts yet" subtitle="Low-risk path creates contracts." />
+          ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
-                <thead><tr><th style={thtd}>Policy Number</th><th style={thtd}>Customer</th><th style={thtd}>PDF</th><th style={thtd}>Action</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th style={thtd}>Policy Number</th>
+                    <th style={thtd}>Customer</th>
+                    <th style={thtd}>PDF</th>
+                    <th style={thtd}>Action</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {contracts.map((c) => (
                     <tr key={c.id}>
                       <td style={thtd}>{c.policy_number}</td>
                       <td style={thtd}>{c.full_name}</td>
-                      <td style={thtd}><a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>Open PDF</a></td>
-                      <td style={thtd}><button style={smallBtn} onClick={() => onRegenerateContract(c.id)}>Regenerate</button></td>
+                      <td style={thtd}>
+                        <a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>
+                          Open PDF
+                        </a>
+                      </td>
+                      <td style={thtd}>
+                        <button style={smallBtn} onClick={() => onRegenerateContract(c.id)}>Regenerate</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -695,10 +828,24 @@ export default function App() {
 
       {!loading && tab === "applications" && (
         <Section title="Applications" subtitle="Manage application status, start KYC, and override risk tier manually.">
-          {!applications.length ? <EmptyState title="No applications found" subtitle="Create from Workflow tab." /> : (
+          {!applications.length ? (
+            <EmptyState title="No applications found" subtitle="Create from Workflow tab." />
+          ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
-                <thead><tr><th style={thtd}>Name</th><th style={thtd}>Email</th><th style={thtd}>KYC</th><th style={thtd}>Risk Tier</th><th style={thtd}>Decision</th><th style={thtd}>Compliance</th><th style={thtd}>Policy</th><th style={thtd}>Override Tier</th><th style={thtd}>Actions</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th style={thtd}>Name</th>
+                    <th style={thtd}>Email</th>
+                    <th style={thtd}>KYC</th>
+                    <th style={thtd}>Risk Tier</th>
+                    <th style={thtd}>Decision</th>
+                    <th style={thtd}>Compliance</th>
+                    <th style={thtd}>Policy</th>
+                    <th style={thtd}>Override Tier</th>
+                    <th style={thtd}>Actions</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {applications.map((a) => (
                     <tr key={a.id}>
@@ -718,7 +865,9 @@ export default function App() {
                           <option value="CRITICAL">CRITICAL</option>
                         </select>
                       </td>
-                      <td style={thtd}><button style={secondaryBtn} onClick={() => onStartKyc(a)} disabled={busy}>Start Sumsub</button></td>
+                      <td style={thtd}>
+                        <button style={secondaryBtn} onClick={() => onStartKyc(a)} disabled={busy}>Start Sumsub</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -728,11 +877,45 @@ export default function App() {
         </Section>
       )}
 
-      {!loading && tab === "verified" && <Section title="Verified Results" subtitle="Verification results list."><EmptyState title="Optional for demo" subtitle="Main demo is the one-by-one flow transition." /></Section>}
-      {!loading && tab === "monitoring" && <Section title="Monitoring" subtitle="Monitoring queue."><EmptyState title="Optional for demo" subtitle="Main demo is the one-by-one flow transition." /></Section>}
-      {!loading && tab === "customers" && <Section title="Customers" subtitle="Created customers."><EmptyState title="Use Customer Detail Page" subtitle="Customer page is opened automatically in LOW flow." /></Section>}
-      {!loading && tab === "dashboard" && <Section title="Dashboard" subtitle="Summary."><div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}><MetricCard label="Applications" value={summary.counts.applications || 0} /><MetricCard label="Customers" value={summary.counts.customers || 0} /><MetricCard label="Contracts" value={summary.counts.contracts || 0} /></div></Section>}
-      {!loading && tab === "audits" && <Section title="Audit Logs" subtitle="Traceability."><EmptyState title="Available" subtitle="Not required for this demo flow." /></Section>}
+      {!loading && tab === "dashboard" && (
+        <Section title="Dashboard" subtitle="Summary.">
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <MetricCard label="Applications" value={summary.counts.applications || 0} />
+            <MetricCard label="Customers" value={summary.counts.customers || 0} />
+            <MetricCard label="Contracts" value={summary.counts.contracts || 0} />
+            <MetricCard label="Audit Logs" value={summary.counts.audits || 0} />
+            <MetricCard label="Open Reviews" value={summary.counts.open_reviews || 0} />
+            <MetricCard label="Monitoring" value={summary.counts.monitoring || 0} />
+          </div>
+        </Section>
+      )}
+
+      {!loading && tab === "audits" && (
+        <Section title="Audit Logs" subtitle="Traceability.">
+          {(summary.audits || []).length === 0 ? (
+            <EmptyState title="No audit logs yet" subtitle="Workflow actions will appear here." />
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    <th style={thtd}>Event Type</th>
+                    <th style={thtd}>Created At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(summary.audits || []).map((a) => (
+                    <tr key={a.id}>
+                      <td style={thtd}>{a.event_type}</td>
+                      <td style={thtd}>{new Date(a.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+      )}
 
       <KycModal open={kycModalOpen} onClose={() => setKycModalOpen(false)} title={kycTitle} />
     </div>

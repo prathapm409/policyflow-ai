@@ -55,15 +55,14 @@ function prettyStatus(value) {
 
 function calcRisk(signals) {
   let score = 0;
-  const reasons = [];
-  if (signals.pepMatch) { score += 50; reasons.push("PEP match detected (+50)"); }
-  if (signals.sanctionsMatch) { score += 100; reasons.push("Sanctions/watchlist match detected (+100)"); }
-  if (signals.adverseMedia) { score += 40; reasons.push("Adverse media detected (+40)"); }
-  if (signals.documentFraudDetected) { score += 60; reasons.push("Document fraud/tampering detected (+60)"); }
-  if (signals.faceMismatch) { score += 40; reasons.push("Face mismatch detected (+40)"); }
-  if (signals.highRiskCountry) { score += 30; reasons.push("High-risk country detected (+30)"); }
-  if (signals.deviceOrIpMismatch) { score += 20; reasons.push("Device/IP mismatch detected (+20)"); }
-  if (signals.manualReviewRequired) { score += 20; reasons.push("Manual review required (+20)"); }
+  if (signals.pepMatch) score += 50;
+  if (signals.sanctionsMatch) score += 100;
+  if (signals.adverseMedia) score += 40;
+  if (signals.documentFraudDetected) score += 60;
+  if (signals.faceMismatch) score += 40;
+  if (signals.highRiskCountry) score += 30;
+  if (signals.deviceOrIpMismatch) score += 20;
+  if (signals.manualReviewRequired) score += 20;
 
   let tier = "LOW";
   let action = "Auto approve";
@@ -71,8 +70,7 @@ function calcRisk(signals) {
   else if (score >= 51) { tier = "HIGH"; action = "Manual review"; }
   else if (score >= 21) { tier = "MEDIUM"; action = "Standard monitoring"; }
 
-  if (!reasons.length) reasons.push("No material risk signals detected (0)");
-  return { score, tier, reasons, action };
+  return { score, tier, action };
 }
 
 function getProcessSteps(riskTier) {
@@ -82,7 +80,7 @@ function getProcessSteps(riskTier) {
     return [
       "Create customer",
       "Generate contract",
-      "Go to customer page with latest customer on top by default",
+      "Go to customer page",
       "Contracts screen",
     ];
   }
@@ -137,9 +135,8 @@ function EmptyState({ title, subtitle }) {
   );
 }
 
-function ProcessFlowCard({ result, onOpenCustomer, onOpenContracts, onOpenReviews }) {
+function ProcessFlowCard({ result }) {
   if (!result?.riskTier) return null;
-
   const steps = getProcessSteps(result.riskTier);
 
   return (
@@ -177,25 +174,6 @@ function ProcessFlowCard({ result, onOpenCustomer, onOpenContracts, onOpenReview
             <div style={{ fontSize: 18, fontWeight: 700 }}>{step}</div>
           </div>
         ))}
-      </div>
-
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 18 }}>
-        {(result.riskTier === "MEDIUM" || result.riskTier === "HIGH" || result.riskTier === "CRITICAL") && (
-          <button style={primaryBtn} onClick={onOpenReviews}>
-            Open Compliance Review To-Do Page
-          </button>
-        )}
-
-        {result.riskTier === "LOW" && (
-          <>
-            <button style={primaryBtn} onClick={onOpenCustomer}>
-              Open Customer Page
-            </button>
-            <button style={secondaryBtn} onClick={onOpenContracts}>
-              Open Contracts Screen
-            </button>
-          </>
-        )}
       </div>
     </Section>
   );
@@ -303,7 +281,6 @@ export default function App() {
   );
 
   const riskPreview = useMemo(() => calcRisk(signals), [signals]);
-  const latestContract = contracts[0] || null;
 
   async function openLatestCustomerDetail(customerIdFromResponse = null) {
     const customersRes = await listCustomers();
@@ -313,16 +290,17 @@ export default function App() {
 
     if (!targetCustomer?.id) {
       setTab("customers");
-      return;
+      return false;
     }
 
     const customerRes = await getCustomer(targetCustomer.id);
     if (customerRes?.ok) {
       setSelectedCustomer(customerRes);
       setTab("customer-detail");
-    } else {
-      setTab("customers");
+      return true;
     }
+    setTab("customers");
+    return false;
   }
 
   async function onCreateApplication(e) {
@@ -332,16 +310,12 @@ export default function App() {
     setInfo("");
     try {
       const res = await createApplication(form);
-      if (!res?.ok) {
-        setError(res?.error || "Failed to create application");
-        return;
-      }
+      if (!res?.ok) return setError(res?.error || "Failed to create application");
       setInfo("Application created successfully.");
       setForm({ fullName: "", email: "" });
       await loadAll();
       setTab("applications");
-    } catch (e) {
-      console.error(e);
+    } catch {
       setError("Create application failed");
     } finally {
       setBusy(false);
@@ -354,18 +328,9 @@ export default function App() {
     setInfo("");
     try {
       const res = await startKyc(app.id);
-      if (!res?.ok) {
-        setError(res?.error || "Failed to start Sumsub");
-        return;
-      }
-      if (!res?.sumsubToken) {
-        setError("Sumsub token was not returned by backend.");
-        return;
-      }
-      if (!window?.snsWebSdk) {
-        setError("Sumsub WebSDK script not loaded.");
-        return;
-      }
+      if (!res?.ok) return setError(res?.error || "Failed to start Sumsub");
+      if (!res?.sumsubToken) return setError("Sumsub token was not returned by backend.");
+      if (!window?.snsWebSdk) return setError("Sumsub WebSDK script not loaded.");
 
       setKycTitle(`Sumsub Verification — ${app.full_name}`);
       setKycModalOpen(true);
@@ -382,16 +347,13 @@ export default function App() {
             })
             .build()
             .launch("#sumsub-websdk-container");
-
           setInfo("Sumsub verification opened.");
-        } catch (sdkErr) {
-          console.error(sdkErr);
+        } catch {
           setError("Sumsub popup failed to open.");
           setKycModalOpen(false);
         }
       }, 100);
-    } catch (e) {
-      console.error(e);
+    } catch {
       setError("Start Sumsub failed");
     } finally {
       setBusy(false);
@@ -404,14 +366,10 @@ export default function App() {
     setInfo("");
     try {
       const res = await overrideRiskTier(applicationId, riskTier);
-      if (!res?.ok) {
-        setError(res?.error || "Failed to override risk tier");
-        return;
-      }
+      if (!res?.ok) return setError(res?.error || "Failed to override risk tier");
       setInfo(`Risk tier updated to ${riskTier}.`);
       await loadAll();
-    } catch (e) {
-      console.error(e);
+    } catch {
       setError("Risk tier override failed");
     } finally {
       setBusy(false);
@@ -420,13 +378,13 @@ export default function App() {
 
   async function onSimulateVerification() {
     if (!selectedApplication?.external_applicant_id) {
-      setError("Start KYC first so an applicant ID exists.");
-      return;
+      return setError("Start KYC first so an applicant ID exists.");
     }
 
     setBusy(true);
     setError("");
     setInfo("");
+
     try {
       const res = await sendSumsubWebhook({
         applicantId: selectedApplication.external_applicant_id,
@@ -434,26 +392,46 @@ export default function App() {
         ...signals,
       });
 
-      const forcedTier = calcRisk(signals).tier;
-      const finalTier = String(res?.riskTier || forcedTier || "").toUpperCase();
+      const fallbackTier = calcRisk(signals).tier;
+      const finalTier = String(res?.riskTier || fallbackTier || "").toUpperCase();
 
       setProcessResult({
         riskTier: finalTier,
         customerId: res?.customer?.id || null,
       });
 
-      if (!res?.ok) {
-        setInfo(`Process preview ready for ${finalTier} risk tier.`);
-      } else {
-        setInfo(`Process completed for ${finalTier} risk tier.`);
-        await loadAll();
-      }
+      await loadAll();
 
-      setTab("workflow");
-    } catch (e) {
+      if (finalTier === "LOW") {
+        setInfo("LOW flow: opening customer page...");
+        const opened = await openLatestCustomerDetail(res?.customer?.id || null);
+        if (opened) {
+          setTimeout(() => {
+            setInfo("LOW flow: opening contracts screen...");
+            setTab("contracts");
+          }, 1500);
+        }
+      } else if (finalTier === "MEDIUM") {
+        setInfo("MEDIUM flow: opening compliance review to-do page...");
+        setTab("reviews");
+      } else if (finalTier === "HIGH" || finalTier === "CRITICAL") {
+        setInfo(`${finalTier} flow: opening compliance review to-do page...`);
+        setTab("reviews");
+      } else {
+        setTab("workflow");
+      }
+    } catch {
       const fallbackTier = calcRisk(signals).tier;
       setProcessResult({ riskTier: fallbackTier, customerId: null });
-      setInfo(`Process preview ready for ${fallbackTier} risk tier.`);
+
+      if (fallbackTier === "LOW") {
+        setInfo("LOW process preview shown.");
+      } else if (fallbackTier === "MEDIUM") {
+        setInfo("MEDIUM process preview shown.");
+      } else {
+        setInfo(`${fallbackTier} process preview shown.`);
+      }
+
       setTab("workflow");
     } finally {
       setBusy(false);
@@ -518,6 +496,8 @@ export default function App() {
   function toggleSignal(key) {
     setSignals((prev) => ({ ...prev, [key]: !prev[key] }));
   }
+
+  const latestContract = contracts[0] || null;
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #031133 0%, #081634 30%, #0d1730 100%)", color: "#fff", fontFamily: "Inter, Arial, sans-serif", padding: 18 }}>
@@ -621,64 +601,16 @@ export default function App() {
             </div>
           </Section>
 
-          <ProcessFlowCard
-            result={processResult}
-            onOpenCustomer={() => openLatestCustomerDetail(processResult?.customerId || null)}
-            onOpenContracts={() => setTab("contracts")}
-            onOpenReviews={() => setTab("reviews")}
-          />
+          <ProcessFlowCard result={processResult} />
         </>
-      )}
-
-      {!loading && tab === "verified" && (
-        <Section title="Verified Results" subtitle="Verification results list.">
-          {!verifiedResults.length ? (
-            <EmptyState title="No verified results yet" subtitle="Use Workflow tab and Apply Verification Result." />
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thtd}>Name</th>
-                    <th style={thtd}>Email</th>
-                    <th style={thtd}>KYC</th>
-                    <th style={thtd}>Risk Tier</th>
-                    <th style={thtd}>Decision</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {verifiedResults.map((r) => (
-                    <tr key={r.id}>
-                      <td style={thtd}>{r.full_name}</td>
-                      <td style={thtd}>{r.email}</td>
-                      <td style={thtd}>{prettyStatus(r.kyc_status)}</td>
-                      <td style={thtd}>{prettyStatus(r.risk_tier)}</td>
-                      <td style={thtd}>{prettyStatus(r.decision_status)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Section>
       )}
 
       {!loading && tab === "reviews" && (
         <Section title="Compliance Review To-Do Page" subtitle="Medium, high and critical review queue.">
-          {!reviews.length ? (
-            <EmptyState title="No compliance review items" subtitle="Use medium/high/critical process in Workflow tab." />
-          ) : (
+          {!reviews.length ? <EmptyState title="No compliance review items" subtitle="Use medium/high/critical process in Workflow tab." /> : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thtd}>Applicant ID</th>
-                    <th style={thtd}>Risk Tier</th>
-                    <th style={thtd}>Status</th>
-                    <th style={thtd}>Reason</th>
-                    <th style={thtd}>Actions</th>
-                  </tr>
-                </thead>
+                <thead><tr><th style={thtd}>Applicant ID</th><th style={thtd}>Risk Tier</th><th style={thtd}>Status</th><th style={thtd}>Reason</th><th style={thtd}>Actions</th></tr></thead>
                 <tbody>
                   {reviews.map((r) => (
                     <tr key={r.id}>
@@ -702,71 +634,9 @@ export default function App() {
         </Section>
       )}
 
-      {!loading && tab === "monitoring" && (
-        <Section title="Monitoring" subtitle="Monitoring queue.">
-          {!monitoring.length ? (
-            <EmptyState title="No monitoring items yet" subtitle="This can remain empty for demo." />
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thtd}>Customer</th>
-                    <th style={thtd}>Frequency</th>
-                    <th style={thtd}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monitoring.map((m) => (
-                    <tr key={m.id}>
-                      <td style={thtd}>{m.full_name}</td>
-                      <td style={thtd}>{m.frequency}</td>
-                      <td style={thtd}>{m.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Section>
-      )}
-
-      {!loading && tab === "customers" && (
-        <Section title="Customers" subtitle="Created customers.">
-          {!customers.length ? (
-            <EmptyState title="No customers yet" subtitle="Create using low or medium flow." />
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thtd}>Name</th>
-                    <th style={thtd}>Email</th>
-                    <th style={thtd}>Risk Tier</th>
-                    <th style={thtd}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {customers.map((c) => (
-                    <tr key={c.id}>
-                      <td style={thtd}>{c.full_name}</td>
-                      <td style={thtd}>{c.email}</td>
-                      <td style={thtd}>{c.risk_tier}</td>
-                      <td style={thtd}><button style={smallBtn} onClick={() => onOpenCustomer(c.id)}>Open</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Section>
-      )}
-
       {!loading && tab === "customer-detail" && (
         <Section title="Customer Detail Page" subtitle="Latest customer on top by default." right={<button style={smallBtn} onClick={() => setTab("contracts")}>Go To Contracts Screen</button>}>
-          {!selectedCustomer?.customer ? (
-            <EmptyState title="No customer selected" subtitle="Open from Customers tab." />
-          ) : (
+          {!selectedCustomer?.customer ? <EmptyState title="No customer selected" subtitle="Open from Customers tab." /> : (
             <>
               <div style={{ ...panelStyle, marginBottom: 16 }}>
                 <h3 style={h3Style}>{selectedCustomer.customer.full_name}</h3>
@@ -779,28 +649,16 @@ export default function App() {
               </div>
 
               <Section title="Customer Contracts" subtitle="Generated contract list for this customer.">
-                {!selectedCustomer.contracts?.length ? (
-                  <EmptyState title="No contracts" subtitle="No contracts available for this customer." />
-                ) : (
+                {!selectedCustomer.contracts?.length ? <EmptyState title="No contracts" subtitle="No contracts available for this customer." /> : (
                   <div style={{ overflowX: "auto" }}>
                     <table style={tableStyle}>
-                      <thead>
-                        <tr>
-                          <th style={thtd}>Policy Number</th>
-                          <th style={thtd}>Status</th>
-                          <th style={thtd}>PDF</th>
-                        </tr>
-                      </thead>
+                      <thead><tr><th style={thtd}>Policy Number</th><th style={thtd}>Status</th><th style={thtd}>PDF</th></tr></thead>
                       <tbody>
                         {selectedCustomer.contracts.map((c) => (
                           <tr key={c.id}>
                             <td style={thtd}>{c.policy_number}</td>
                             <td style={thtd}>{c.status}</td>
-                            <td style={thtd}>
-                              <a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>
-                                Open PDF
-                              </a>
-                            </td>
+                            <td style={thtd}><a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>Open PDF</a></td>
                           </tr>
                         ))}
                       </tbody>
@@ -814,33 +672,18 @@ export default function App() {
       )}
 
       {!loading && tab === "contracts" && (
-        <Section title="Contracts Screen" subtitle="Generated contracts list.">
-          {!contracts.length ? (
-            <EmptyState title="No contracts yet" subtitle="Low-risk path creates contracts." />
-          ) : (
+        <Section title="Contracts Screen" subtitle="Generated contracts list." right={latestContract ? <Badge bg="#dbeafe" color="#1e3a8a">{latestContract.policy_number}</Badge> : null}>
+          {!contracts.length ? <EmptyState title="No contracts yet" subtitle="Low-risk path creates contracts." /> : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thtd}>Policy Number</th>
-                    <th style={thtd}>Customer</th>
-                    <th style={thtd}>PDF</th>
-                    <th style={thtd}>Action</th>
-                  </tr>
-                </thead>
+                <thead><tr><th style={thtd}>Policy Number</th><th style={thtd}>Customer</th><th style={thtd}>PDF</th><th style={thtd}>Action</th></tr></thead>
                 <tbody>
                   {contracts.map((c) => (
                     <tr key={c.id}>
                       <td style={thtd}>{c.policy_number}</td>
                       <td style={thtd}>{c.full_name}</td>
-                      <td style={thtd}>
-                        <a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>
-                          Open PDF
-                        </a>
-                      </td>
-                      <td style={thtd}>
-                        <button style={smallBtn} onClick={() => onRegenerateContract(c.id)}>Regenerate</button>
-                      </td>
+                      <td style={thtd}><a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>Open PDF</a></td>
+                      <td style={thtd}><button style={smallBtn} onClick={() => onRegenerateContract(c.id)}>Regenerate</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -852,24 +695,10 @@ export default function App() {
 
       {!loading && tab === "applications" && (
         <Section title="Applications" subtitle="Manage application status, start KYC, and override risk tier manually.">
-          {!applications.length ? (
-            <EmptyState title="No applications found" subtitle="Create from Workflow tab." />
-          ) : (
+          {!applications.length ? <EmptyState title="No applications found" subtitle="Create from Workflow tab." /> : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thtd}>Name</th>
-                    <th style={thtd}>Email</th>
-                    <th style={thtd}>KYC</th>
-                    <th style={thtd}>Risk Tier</th>
-                    <th style={thtd}>Decision</th>
-                    <th style={thtd}>Compliance</th>
-                    <th style={thtd}>Policy</th>
-                    <th style={thtd}>Override Tier</th>
-                    <th style={thtd}>Actions</th>
-                  </tr>
-                </thead>
+                <thead><tr><th style={thtd}>Name</th><th style={thtd}>Email</th><th style={thtd}>KYC</th><th style={thtd}>Risk Tier</th><th style={thtd}>Decision</th><th style={thtd}>Compliance</th><th style={thtd}>Policy</th><th style={thtd}>Override Tier</th><th style={thtd}>Actions</th></tr></thead>
                 <tbody>
                   {applications.map((a) => (
                     <tr key={a.id}>
@@ -889,9 +718,7 @@ export default function App() {
                           <option value="CRITICAL">CRITICAL</option>
                         </select>
                       </td>
-                      <td style={thtd}>
-                        <button style={secondaryBtn} onClick={() => onStartKyc(a)} disabled={busy}>Start Sumsub</button>
-                      </td>
+                      <td style={thtd}><button style={secondaryBtn} onClick={() => onStartKyc(a)} disabled={busy}>Start Sumsub</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -901,45 +728,11 @@ export default function App() {
         </Section>
       )}
 
-      {!loading && tab === "dashboard" && (
-        <Section title="Dashboard" subtitle="Quick summary of the current prototype state.">
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <MetricCard label="Applications" value={summary.counts.applications || 0} />
-            <MetricCard label="Customers" value={summary.counts.customers || 0} />
-            <MetricCard label="Contracts" value={summary.counts.contracts || 0} />
-            <MetricCard label="Audit Logs" value={summary.counts.audits || 0} />
-            <MetricCard label="Open Reviews" value={summary.counts.open_reviews || 0} />
-            <MetricCard label="Monitoring" value={summary.counts.monitoring || 0} />
-          </div>
-        </Section>
-      )}
-
-      {!loading && tab === "audits" && (
-        <Section title="Audit Logs" subtitle="Traceability of workflow events.">
-          {(summary.audits || []).length === 0 ? (
-            <EmptyState title="No audit logs yet" subtitle="Workflow actions will appear here." />
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thtd}>Event Type</th>
-                    <th style={thtd}>Created At</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(summary.audits || []).map((a) => (
-                    <tr key={a.id}>
-                      <td style={thtd}>{a.event_type}</td>
-                      <td style={thtd}>{new Date(a.created_at).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Section>
-      )}
+      {!loading && tab === "verified" && <Section title="Verified Results" subtitle="Verification results list."><EmptyState title="Optional for demo" subtitle="Main demo is the one-by-one flow transition." /></Section>}
+      {!loading && tab === "monitoring" && <Section title="Monitoring" subtitle="Monitoring queue."><EmptyState title="Optional for demo" subtitle="Main demo is the one-by-one flow transition." /></Section>}
+      {!loading && tab === "customers" && <Section title="Customers" subtitle="Created customers."><EmptyState title="Use Customer Detail Page" subtitle="Customer page is opened automatically in LOW flow." /></Section>}
+      {!loading && tab === "dashboard" && <Section title="Dashboard" subtitle="Summary."><div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}><MetricCard label="Applications" value={summary.counts.applications || 0} /><MetricCard label="Customers" value={summary.counts.customers || 0} /><MetricCard label="Contracts" value={summary.counts.contracts || 0} /></div></Section>}
+      {!loading && tab === "audits" && <Section title="Audit Logs" subtitle="Traceability."><EmptyState title="Available" subtitle="Not required for this demo flow." /></Section>}
 
       <KycModal open={kycModalOpen} onClose={() => setKycModalOpen(false)} title={kycTitle} />
     </div>

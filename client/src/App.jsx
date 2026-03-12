@@ -29,6 +29,9 @@ const STATUS_COLORS = {
   GENERATED: "#16a34a",
   MONITORING_ONLY: "#0ea5e9",
   ON_HOLD: "#f59e0b",
+  ACTIVE: "#16a34a",
+  COMPLETED: "#2563eb",
+  SNOOZED: "#f59e0b",
 };
 
 const TIER_COLORS = {
@@ -44,7 +47,8 @@ const SIGNAL_OPTIONS = [
   { key: "adverseMedia", label: "Adverse media" },
   { key: "documentFraudDetected", label: "Document tampering" },
   { key: "faceMismatch", label: "Face mismatch" },
-  { key: "deviceOrIpMismatch", label: "Device/IP mismatch" },
+  { key: "deviceRisk", label: "Device risk" },
+  { key: "ipMismatch", label: "IP mismatch" },
   { key: "highRiskCountry", label: "Country risk" },
   { key: "manualReviewRequired", label: "Manual review required" },
 ];
@@ -55,14 +59,17 @@ function prettyStatus(value) {
 
 function calcRisk(signals) {
   let score = 0;
-  if (signals.pepMatch) score += 50;
-  if (signals.sanctionsMatch) score += 100;
-  if (signals.adverseMedia) score += 40;
-  if (signals.documentFraudDetected) score += 60;
-  if (signals.faceMismatch) score += 40;
-  if (signals.highRiskCountry) score += 30;
-  if (signals.deviceOrIpMismatch) score += 20;
-  if (signals.manualReviewRequired) score += 20;
+  const sourceReasons = [];
+
+  if (signals.pepMatch) { score += 50; sourceReasons.push("PEP"); }
+  if (signals.sanctionsMatch) { score += 100; sourceReasons.push("Sanctions"); }
+  if (signals.adverseMedia) { score += 40; sourceReasons.push("Adverse media"); }
+  if (signals.documentFraudDetected) { score += 60; sourceReasons.push("Document fraud"); }
+  if (signals.faceMismatch) { score += 40; sourceReasons.push("Face mismatch"); }
+  if (signals.highRiskCountry) { score += 30; sourceReasons.push("Country risk"); }
+  if (signals.deviceRisk) { score += 20; sourceReasons.push("Device risk"); }
+  if (signals.ipMismatch) { score += 20; sourceReasons.push("IP mismatch"); }
+  if (signals.manualReviewRequired) { score += 20; sourceReasons.push("Manual review"); }
 
   let tier = "LOW";
   let action = "Auto approve";
@@ -70,7 +77,7 @@ function calcRisk(signals) {
   else if (score >= 51) { tier = "HIGH"; action = "Manual review"; }
   else if (score >= 21) { tier = "MEDIUM"; action = "Standard monitoring"; }
 
-  return { score, tier, action };
+  return { score, tier, action, sourceReasons };
 }
 
 function getProcessSteps(riskTier) {
@@ -79,15 +86,17 @@ function getProcessSteps(riskTier) {
   if (tier === "LOW") {
     return [
       "Create customer",
-      "Generate contract",
+      "Generate policy",
+      "Create monitoring every 12 months",
       "Go to customer page",
-      "Contracts screen",
+      "Open contracts screen",
     ];
   }
 
   if (tier === "MEDIUM") {
     return [
       "Create customer",
+      "Create monitoring every 6 months",
       "Send to compliance review",
       "Go to compliance review to-do page",
     ];
@@ -96,6 +105,7 @@ function getProcessSteps(riskTier) {
   if (tier === "HIGH" || tier === "CRITICAL") {
     return [
       "Send to compliance review",
+      "Hold policy issuance",
       "Go to compliance review to-do page",
     ];
   }
@@ -175,6 +185,17 @@ function ProcessFlowCard({ result }) {
           </div>
         ))}
       </div>
+
+      {result?.amlReasons?.length ? (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontWeight: 800, marginBottom: 8 }}>AML / Risk source traceability</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {result.amlReasons.map((r) => (
+              <Badge key={r} bg="#334155">{r}</Badge>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </Section>
   );
 }
@@ -224,7 +245,8 @@ export default function App() {
     adverseMedia: false,
     documentFraudDetected: false,
     faceMismatch: false,
-    deviceOrIpMismatch: false,
+    deviceRisk: false,
+    ipMismatch: false,
     highRiskCountry: false,
     manualReviewRequired: false,
   });
@@ -393,12 +415,14 @@ export default function App() {
         ...signals,
       });
 
-      const fallbackTier = calcRisk(signals).tier;
-      const finalTier = String(res?.riskTier || fallbackTier || "").toUpperCase();
+      const fallback = calcRisk(signals);
+      const finalTier = String(res?.riskTier || fallback.tier || "").toUpperCase();
+      const amlReasons = res?.reasons?.length ? res.reasons : fallback.sourceReasons;
 
       setProcessResult({
         riskTier: finalTier,
         customerId: res?.customer?.id || null,
+        amlReasons,
       });
 
       await loadAll();
@@ -422,9 +446,13 @@ export default function App() {
         setTab("workflow");
       }
     } catch {
-      const fallbackTier = calcRisk(signals).tier;
-      setProcessResult({ riskTier: fallbackTier, customerId: null });
-      setInfo(`${fallbackTier} process preview shown.`);
+      const fallback = calcRisk(signals);
+      setProcessResult({
+        riskTier: fallback.tier,
+        customerId: null,
+        amlReasons: fallback.sourceReasons,
+      });
+      setInfo(`${fallback.tier} process preview shown.`);
       setTab("workflow");
     } finally {
       setBusy(false);
@@ -585,6 +613,17 @@ export default function App() {
                   <Badge bg="#334155">{riskPreview.action}</Badge>
                 </div>
 
+                {riskPreview.sourceReasons.length ? (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>Risk source traceability</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {riskPreview.sourceReasons.map((r) => (
+                        <Badge key={r} bg="#334155">{r}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <button style={{ ...primaryBtn, marginTop: 16 }} disabled={busy || !selectedApplication} onClick={onSimulateVerification}>
                   Apply Verification Result
                 </button>
@@ -608,6 +647,7 @@ export default function App() {
                     <th style={thtd}>Name</th>
                     <th style={thtd}>Email</th>
                     <th style={thtd}>KYC</th>
+                    <th style={thtd}>Risk Score</th>
                     <th style={thtd}>Risk Tier</th>
                     <th style={thtd}>Decision</th>
                   </tr>
@@ -617,8 +657,9 @@ export default function App() {
                     <tr key={r.id}>
                       <td style={thtd}>{r.full_name}</td>
                       <td style={thtd}>{r.email}</td>
-                      <td style={thtd}>{prettyStatus(r.kyc_status)}</td>
-                      <td style={thtd}>{prettyStatus(r.risk_tier)}</td>
+                      <td style={thtd}><Badge bg={STATUS_COLORS[r.kyc_status] || "#475569"}>{prettyStatus(r.kyc_status)}</Badge></td>
+                      <td style={thtd}>{r.risk_score ?? 0}</td>
+                      <td style={thtd}><Badge bg={TIER_COLORS[r.risk_tier] || "#334155"}>{prettyStatus(r.risk_tier)}</Badge></td>
                       <td style={thtd}>{prettyStatus(r.decision_status)}</td>
                     </tr>
                   ))}
@@ -639,6 +680,7 @@ export default function App() {
                 <thead>
                   <tr>
                     <th style={thtd}>Applicant ID</th>
+                    <th style={thtd}>Risk Score</th>
                     <th style={thtd}>Risk Tier</th>
                     <th style={thtd}>Status</th>
                     <th style={thtd}>Reason</th>
@@ -649,7 +691,8 @@ export default function App() {
                   {reviews.map((r) => (
                     <tr key={r.id}>
                       <td style={thtd}>{r.applicant_id}</td>
-                      <td style={thtd}>{r.risk_tier}</td>
+                      <td style={thtd}>{r.risk_score}</td>
+                      <td style={thtd}><Badge bg={TIER_COLORS[r.risk_tier] || "#334155"}>{prettyStatus(r.risk_tier)}</Badge></td>
                       <td style={thtd}>{r.status}</td>
                       <td style={thtd}>{r.reason}</td>
                       <td style={thtd}>
@@ -683,6 +726,7 @@ export default function App() {
                     <th style={thtd}>Frequency</th>
                     <th style={thtd}>Status</th>
                     <th style={thtd}>Next Review</th>
+                    <th style={thtd}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -690,10 +734,16 @@ export default function App() {
                     <tr key={m.id}>
                       <td style={thtd}>{m.full_name}</td>
                       <td style={thtd}>{m.email}</td>
-                      <td style={thtd}>{prettyStatus(m.risk_tier)}</td>
+                      <td style={thtd}><Badge bg={TIER_COLORS[String(m.risk_tier || "").toUpperCase()] || "#334155"}>{prettyStatus(m.risk_tier)}</Badge></td>
                       <td style={thtd}>{m.frequency}</td>
-                      <td style={thtd}>{m.status}</td>
+                      <td style={thtd}><Badge bg={STATUS_COLORS[m.status] || "#475569"}>{m.status}</Badge></td>
                       <td style={thtd}>{m.next_review_at ? new Date(m.next_review_at).toLocaleString() : "-"}</td>
+                      <td style={thtd}>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button style={smallBtn} onClick={() => onMonitoringAction(m.id, "COMPLETE")}>Complete</button>
+                          <button style={smallBtn} onClick={() => onMonitoringAction(m.id, "SNOOZE")}>Snooze</button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -724,7 +774,7 @@ export default function App() {
                     <tr key={c.id}>
                       <td style={thtd}>{c.full_name}</td>
                       <td style={thtd}>{c.email}</td>
-                      <td style={thtd}>{prettyStatus(c.risk_tier)}</td>
+                      <td style={thtd}><Badge bg={TIER_COLORS[String(c.risk_tier || "").toUpperCase()] || "#334155"}>{prettyStatus(c.risk_tier)}</Badge></td>
                       <td style={thtd}>{c.risk_score ?? 0}</td>
                       <td style={thtd}>
                         <button style={smallBtn} onClick={() => onOpenCustomer(c.id)}>Open</button>
@@ -784,6 +834,33 @@ export default function App() {
                   </div>
                 )}
               </Section>
+
+              <Section title="Customer Monitoring" subtitle="Monitoring records for this customer.">
+                {!selectedCustomer.monitoring?.length ? (
+                  <EmptyState title="No monitoring" subtitle="No monitoring record available for this customer." />
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={tableStyle}>
+                      <thead>
+                        <tr>
+                          <th style={thtd}>Frequency</th>
+                          <th style={thtd}>Status</th>
+                          <th style={thtd}>Next Review</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedCustomer.monitoring.map((m) => (
+                          <tr key={m.id}>
+                            <td style={thtd}>{m.frequency}</td>
+                            <td style={thtd}>{m.status}</td>
+                            <td style={thtd}>{m.next_review_at ? new Date(m.next_review_at).toLocaleString() : "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Section>
             </>
           )}
         </Section>
@@ -800,6 +877,7 @@ export default function App() {
                   <tr>
                     <th style={thtd}>Policy Number</th>
                     <th style={thtd}>Customer</th>
+                    <th style={thtd}>Email</th>
                     <th style={thtd}>PDF</th>
                     <th style={thtd}>Action</th>
                   </tr>
@@ -809,6 +887,7 @@ export default function App() {
                     <tr key={c.id}>
                       <td style={thtd}>{c.policy_number}</td>
                       <td style={thtd}>{c.full_name}</td>
+                      <td style={thtd}>{c.email}</td>
                       <td style={thtd}>
                         <a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>
                           Open PDF
@@ -839,9 +918,11 @@ export default function App() {
                     <th style={thtd}>Email</th>
                     <th style={thtd}>KYC</th>
                     <th style={thtd}>Risk Tier</th>
+                    <th style={thtd}>Risk Score</th>
                     <th style={thtd}>Decision</th>
                     <th style={thtd}>Compliance</th>
                     <th style={thtd}>Policy</th>
+                    <th style={thtd}>Monitoring</th>
                     <th style={thtd}>Override Tier</th>
                     <th style={thtd}>Actions</th>
                   </tr>
@@ -853,9 +934,11 @@ export default function App() {
                       <td style={thtd}>{a.email}</td>
                       <td style={thtd}><Badge bg={STATUS_COLORS[a.kyc_status] || "#475569"}>{prettyStatus(a.kyc_status)}</Badge></td>
                       <td style={thtd}><Badge bg={TIER_COLORS[a.risk_tier] || "#334155"}>{prettyStatus(a.risk_tier)}</Badge></td>
+                      <td style={thtd}>{a.risk_score ?? 0}</td>
                       <td style={thtd}>{prettyStatus(a.decision_status)}</td>
                       <td style={thtd}>{prettyStatus(a.compliance_status)}</td>
                       <td style={thtd}>{prettyStatus(a.policy_status)}</td>
+                      <td style={thtd}>{a.monitoring_frequency || "-"}</td>
                       <td style={thtd}>
                         <select defaultValue="" style={{ ...inputStyle, minWidth: 130 }} onChange={(e) => e.target.value && onOverrideTier(a.id, e.target.value)}>
                           <option value="">Select</option>

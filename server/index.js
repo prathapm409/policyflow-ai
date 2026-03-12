@@ -9,7 +9,6 @@ const {
   calculateRiskScore,
   assignRiskTierFromScore,
   determineKycDecision,
-  monitoringFrequencyForTier,
 } = require("./rules");
 const { generateContractPDF } = require("./pdf");
 const { sumsubRequest, verifyWebhookSignature } = require("./sumsub");
@@ -116,9 +115,12 @@ function buildSignalPayload(payload = {}) {
       Boolean(payload.highRiskCountry) ||
       hasLabel("COUNTRY") ||
       hasLabel("HIGH_RISK_COUNTRY"),
-    deviceOrIpMismatch:
+    deviceRisk:
+      Boolean(payload.deviceRisk) ||
+      hasLabel("DEVICE"),
+    ipMismatch:
+      Boolean(payload.ipMismatch) ||
       Boolean(payload.deviceOrIpMismatch) ||
-      hasLabel("DEVICE") ||
       hasLabel("IP"),
     manualReviewRequired:
       Boolean(payload.manualReviewRequired) ||
@@ -152,6 +154,20 @@ function deriveStrictVerification(payload = {}, baseStatus) {
   return baseStatus;
 }
 
+function buildReasonLines(signals) {
+  const reasons = [];
+  if (signals.pepMatch) reasons.push("PEP");
+  if (signals.sanctionsMatch) reasons.push("Sanctions");
+  if (signals.adverseMedia) reasons.push("Adverse media");
+  if (signals.documentFraudDetected) reasons.push("Document fraud");
+  if (signals.faceMismatch) reasons.push("Face mismatch");
+  if (signals.highRiskCountry) reasons.push("Country risk");
+  if (signals.deviceRisk) reasons.push("Device risk");
+  if (signals.ipMismatch) reasons.push("IP mismatch");
+  if (signals.manualReviewRequired) reasons.push("Manual review");
+  return reasons;
+}
+
 async function ensureCustomer(application, applicantId, riskTier, score) {
   const existingCustomer = await safeQuery(
     `SELECT * FROM customers WHERE external_id = $1 ORDER BY id DESC LIMIT 1`,
@@ -159,6 +175,11 @@ async function ensureCustomer(application, applicantId, riskTier, score) {
   );
 
   if (existingCustomer.rows.length) {
+    await safeQuery(
+      `UPDATE customers SET risk_tier = $2, risk_score = $3 WHERE id = $1`,
+      [existingCustomer.rows[0].id, riskTier, score]
+    );
+    await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [application.id, existingCustomer.rows[0].id]);
     return existingCustomer.rows[0];
   }
 
@@ -172,7 +193,6 @@ async function ensureCustomer(application, applicantId, riskTier, score) {
   );
 
   await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [application.id, customerRes.rows[0].id]);
-
   return customerRes.rows[0];
 }
 
@@ -232,7 +252,7 @@ async function ensureContract(application, customer, applicantId, verificationSt
       "1985-07-21",
       applicantId,
       verificationStatus,
-      monitoringFrequency || "12_MONTHS",
+      monitoringFrequency,
     ]
   );
 
@@ -240,14 +260,30 @@ async function ensureContract(application, customer, applicantId, verificationSt
   return contractRes.rows[0];
 }
 
-async function ensureMonitoring(customerId, frequency) {
-  if (!frequency) return;
-  const existing = await safeQuery(`SELECT * FROM monitoring WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`, [customerId]);
-  if (existing.rows.length) return existing.rows[0];
+async function upsertMonitoring(customerId, frequency) {
+  const existing = await safeQuery(
+    `SELECT * FROM monitoring WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
+    [customerId]
+  );
+
+  const intervalMap = {
+    "12_MONTHS": "365 days",
+    "6_MONTHS": "180 days",
+    "3_MONTHS": "90 days",
+  };
+  const interval = intervalMap[frequency] || "365 days";
+
+  if (existing.rows.length) {
+    const updated = await safeQuery(
+      `UPDATE monitoring SET frequency = $2, status = 'ACTIVE', next_review_at = NOW() + ($3)::interval WHERE id = $1 RETURNING *`,
+      [existing.rows[0].id, frequency, interval]
+    );
+    return updated.rows[0];
+  }
 
   const inserted = await safeQuery(
-    `INSERT INTO monitoring (customer_id, frequency, status, next_review_at) VALUES ($1, $2, 'ACTIVE', NOW() + INTERVAL '30 days') RETURNING *`,
-    [customerId, frequency]
+    `INSERT INTO monitoring (customer_id, frequency, status, next_review_at) VALUES ($1, $2, 'ACTIVE', NOW() + ($3)::interval) RETURNING *`,
+    [customerId, frequency, interval]
   );
   return inserted.rows[0];
 }
@@ -306,7 +342,7 @@ app.get("/api/summary", async (req, res) => {
     `);
 
     const customers = await safeQuery(`SELECT * FROM customers ORDER BY created_at DESC LIMIT 10`);
-    const audits = await safeQuery(`SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 10`);
+    const audits = await safeQuery(`SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 20`);
     const contracts = await safeQuery(`
       SELECT c.*, cu.full_name, cu.email, cu.risk_tier
       FROM contracts c
@@ -518,7 +554,19 @@ app.post("/api/webhook/sumsub", async (req, res) => {
     verificationStatus = deriveStrictVerification(payload, verificationStatus);
 
     const signals = buildSignalPayload(payload);
-    const { score, reasons } = calculateRiskScore(signals);
+    const traceReasons = buildReasonLines(signals);
+
+    const score = [
+      signals.pepMatch ? 50 : 0,
+      signals.sanctionsMatch ? 100 : 0,
+      signals.adverseMedia ? 40 : 0,
+      signals.documentFraudDetected ? 60 : 0,
+      signals.faceMismatch ? 40 : 0,
+      signals.highRiskCountry ? 30 : 0,
+      signals.deviceRisk ? 20 : 0,
+      signals.ipMismatch ? 20 : 0,
+      signals.manualReviewRequired ? 20 : 0,
+    ].reduce((a, b) => a + b, 0);
 
     const appRes = await safeQuery(
       `SELECT * FROM applications WHERE external_applicant_id = $1 ORDER BY id DESC LIMIT 1`,
@@ -530,13 +578,14 @@ app.post("/api/webhook/sumsub", async (req, res) => {
 
     const application = appRes.rows[0];
     const riskTier = normalizeTier(application.risk_override_tier) || assignRiskTierFromScore(score);
-    const monitoringFrequency = monitoringFrequencyForTier(riskTier);
 
     let decisionStatus = determineKycDecision({ verificationStatus, riskTier });
     let complianceStatus = "NOT_REQUIRED";
     let policyStatus = "NOT_STARTED";
+    let monitoringFrequency = null;
     let customer = null;
     let contract = null;
+    let monitoringRecord = null;
     let complianceReview = null;
 
     if (verificationStatus === "APPROVED") {
@@ -544,20 +593,25 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         decisionStatus = "AUTO_APPROVED";
         complianceStatus = "NOT_REQUIRED";
         policyStatus = "GENERATED";
+        monitoringFrequency = "12_MONTHS";
+
         customer = await ensureCustomer(application, applicantId, riskTier, score);
         contract = await ensureContract(application, customer, applicantId, verificationStatus, monitoringFrequency);
+        monitoringRecord = await upsertMonitoring(customer.id, monitoringFrequency);
       } else if (riskTier === "MEDIUM") {
         decisionStatus = "STANDARD_MONITORING";
         complianceStatus = "IN_REVIEW";
         policyStatus = "MONITORING_ONLY";
+        monitoringFrequency = "6_MONTHS";
+
         customer = await ensureCustomer(application, applicantId, riskTier, score);
-        await ensureMonitoring(customer.id, monitoringFrequency || "QUARTERLY");
+        monitoringRecord = await upsertMonitoring(customer.id, monitoringFrequency);
         complianceReview = await createComplianceReview(
           application.id,
           applicantId,
           score,
           riskTier,
-          reasons.join("; ") || "Medium-risk approved KYC requires compliance review"
+          traceReasons.join(", ") || "Medium risk standard monitoring"
         );
       } else if (riskTier === "HIGH") {
         decisionStatus = "MANUAL_REVIEW";
@@ -568,7 +622,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
           applicantId,
           score,
           riskTier,
-          reasons.join("; ") || "High-risk case sent to compliance review"
+          traceReasons.join(", ") || "High risk manual review"
         );
       } else {
         decisionStatus = "REJECT_ESCALATE";
@@ -579,7 +633,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
           applicantId,
           score,
           "CRITICAL",
-          reasons.join("; ") || "Critical-risk case escalated"
+          traceReasons.join(", ") || "Critical risk reject / escalate"
         );
       }
     } else if (verificationStatus === "REJECTED") {
@@ -591,7 +645,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         applicantId,
         score,
         riskTier,
-        reasons.join("; ") || "KYC rejected"
+        traceReasons.join(", ") || "KYC rejected"
       );
     } else if (verificationStatus === "REVIEW") {
       decisionStatus = "MANUAL_REVIEW";
@@ -602,7 +656,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         applicantId,
         score,
         riskTier,
-        reasons.join("; ") || "Sent to review"
+        traceReasons.join(", ") || "Sent to review"
       );
     } else {
       decisionStatus = "PENDING";
@@ -650,10 +704,9 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         applicationId: application.id,
         applicantId,
         verificationStatus,
-        payloadType: payload.type || null,
         score,
         riskTier,
-        reasons,
+        traceReasons,
         decisionStatus,
       },
     ]);
@@ -663,17 +716,12 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       application: updatedApp.rows[0],
       customer,
       contract,
+      monitoring: monitoringRecord,
       complianceReview,
       score,
       riskTier,
-      reasons,
       verificationStatus,
-      nextView:
-        riskTier === "LOW" && contract
-          ? "contracts"
-          : riskTier === "MEDIUM" || riskTier === "HIGH" || riskTier === "CRITICAL"
-          ? "reviews"
-          : "verified",
+      reasons: traceReasons,
     });
   } catch (e) {
     console.error("Sumsub webhook error:", e);
@@ -842,7 +890,7 @@ app.post("/api/monitoring/:id/action", async (req, res) => {
 
     let sql =
       action === "COMPLETE"
-        ? `UPDATE monitoring SET status = 'COMPLETED', next_review_at = NOW() + INTERVAL '90 days' WHERE id = $1 RETURNING *`
+        ? `UPDATE monitoring SET status = 'COMPLETED', next_review_at = NOW() + INTERVAL '180 days' WHERE id = $1 RETURNING *`
         : `UPDATE monitoring SET status = 'SNOOZED', next_review_at = NOW() + INTERVAL '30 days' WHERE id = $1 RETURNING *`;
 
     const updated = await safeQuery(sql, [req.params.id]);

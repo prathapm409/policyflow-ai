@@ -75,6 +75,36 @@ function calcRisk(signals) {
   return { score, tier, reasons, action };
 }
 
+function getProcessSteps(riskTier) {
+  const tier = String(riskTier || "").toUpperCase();
+
+  if (tier === "LOW") {
+    return [
+      "Create customer",
+      "Generate contract",
+      "Go to customer page with latest customer on top by default",
+      "Contracts screen",
+    ];
+  }
+
+  if (tier === "MEDIUM") {
+    return [
+      "Create customer",
+      "Send to compliance review",
+      "Go to compliance review to-do page",
+    ];
+  }
+
+  if (tier === "HIGH" || tier === "CRITICAL") {
+    return [
+      "Send to compliance review",
+      "Go to compliance review to-do page",
+    ];
+  }
+
+  return ["Verification completed"];
+}
+
 function Badge({ children, bg = "#1e293b", color = "#fff" }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: bg, color, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
@@ -127,6 +157,70 @@ function KycModal({ open, onClose, title }) {
   );
 }
 
+function ProcessFlowCard({ result, onOpenCustomer, onOpenContracts, onOpenReviews }) {
+  if (!result) return null;
+
+  const steps = getProcessSteps(result.riskTier);
+
+  return (
+    <Section
+      title="Process Result"
+      subtitle={`Exact next-step process for ${result.riskTier} risk tier.`}
+      right={<Badge bg={TIER_COLORS[result.riskTier] || "#334155"}>{result.riskTier}</Badge>}
+    >
+      <div style={{ display: "grid", gap: 12 }}>
+        {steps.map((step, index) => (
+          <div
+            key={step}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+              padding: 14,
+              borderRadius: 14,
+              background: "#0f1b39",
+              border: "1px solid rgba(255,255,255,0.08)",
+            }}
+          >
+            <div style={{
+              width: 34,
+              height: 34,
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "#7c5cff",
+              fontWeight: 900
+            }}>
+              {index + 1}
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{step}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 18 }}>
+        {(result.riskTier === "MEDIUM" || result.riskTier === "HIGH" || result.riskTier === "CRITICAL") && (
+          <button style={primaryBtn} onClick={onOpenReviews}>
+            Open Compliance Review To-Do Page
+          </button>
+        )}
+
+        {result.riskTier === "LOW" && (
+          <>
+            <button style={primaryBtn} onClick={onOpenCustomer}>
+              Open Customer Page
+            </button>
+            <button style={secondaryBtn} onClick={onOpenContracts}>
+              Open Contracts Screen
+            </button>
+          </>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 export default function App() {
   const [summary, setSummary] = useState({ counts: {}, customers: [], audits: [], contracts: [] });
   const [applications, setApplications] = useState([]);
@@ -136,6 +230,7 @@ export default function App() {
   const [verifiedResults, setVerifiedResults] = useState([]);
   const [monitoring, setMonitoring] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [processResult, setProcessResult] = useState(null);
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -211,20 +306,17 @@ export default function App() {
   const latestContract = contracts[0] || null;
 
   async function openLatestCustomerDetail(customerIdFromResponse = null) {
-    await loadAll();
-    let targetCustomerId = customerIdFromResponse;
+    const customersRes = await listCustomers();
+    const latestCustomer = customerIdFromResponse
+      ? { id: customerIdFromResponse }
+      : customersRes?.customers?.[0];
 
-    if (!targetCustomerId) {
-      const latestCustomer = (await listCustomers())?.customers?.[0];
-      targetCustomerId = latestCustomer?.id;
-    }
-
-    if (!targetCustomerId) {
+    if (!latestCustomer?.id) {
       setTab("customers");
       return;
     }
 
-    const customerRes = await getCustomer(targetCustomerId);
+    const customerRes = await getCustomer(latestCustomer.id);
     if (customerRes?.ok) {
       setSelectedCustomer(customerRes);
       setTab("customer-detail");
@@ -347,18 +439,16 @@ export default function App() {
         return;
       }
 
-      setInfo("Verification processed successfully.");
       await loadAll();
 
       const riskTier = String(res?.riskTier || "").toUpperCase();
+      setProcessResult({
+        riskTier,
+        customerId: res?.customer?.id || null,
+      });
 
-      if (riskTier === "LOW") {
-        await openLatestCustomerDetail(res?.customer?.id || null);
-      } else if (["MEDIUM", "HIGH", "CRITICAL"].includes(riskTier)) {
-        setTab("reviews");
-      } else {
-        setTab("verified");
-      }
+      setInfo(`Process completed for ${riskTier} risk tier.`);
+      setTab("workflow");
     } catch (e) {
       console.error(e);
       setError("Verification processing failed");
@@ -457,75 +547,84 @@ export default function App() {
       {loading ? <div>Loading...</div> : null}
 
       {!loading && tab === "workflow" && (
-        <Section title="KYC Workflow" subtitle="Create an application, launch Sumsub, review risk signals, and simulate verification outcomes.">
-          <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 18 }}>
-            <div style={panelStyle}>
-              <h3 style={h3Style}>Create application</h3>
-              <form onSubmit={onCreateApplication} style={{ display: "grid", gap: 12 }}>
-                <input placeholder="Full name" value={form.fullName} onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))} style={inputStyle} />
-                <input placeholder="Email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} style={inputStyle} />
-                <button type="submit" style={primaryBtn} disabled={busy}>Create Application</button>
-              </form>
-            </div>
+        <>
+          <Section title="KYC Workflow" subtitle="Create an application, launch Sumsub, review risk signals, and simulate verification outcomes.">
+            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 18 }}>
+              <div style={panelStyle}>
+                <h3 style={h3Style}>Create application</h3>
+                <form onSubmit={onCreateApplication} style={{ display: "grid", gap: 12 }}>
+                  <input placeholder="Full name" value={form.fullName} onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))} style={inputStyle} />
+                  <input placeholder="Email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} style={inputStyle} />
+                  <button type="submit" style={primaryBtn} disabled={busy}>Create Application</button>
+                </form>
+              </div>
 
-            <div style={panelStyle}>
-              <h3 style={h3Style}>Risk signals and verification</h3>
+              <div style={panelStyle}>
+                <h3 style={h3Style}>Risk signals and verification</h3>
 
-              <select value={selectedId || ""} onChange={(e) => setSelectedId(Number(e.target.value))} style={inputStyle}>
-                <option value="">Select application</option>
-                {applications.map((app) => (
-                  <option key={app.id} value={app.id}>
-                    {app.full_name} — {app.email}
-                  </option>
-                ))}
-              </select>
-
-              <div style={{ marginTop: 14 }}>
-                <div style={{ fontWeight: 800, marginBottom: 10 }}>Select risk labels / flags</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {SIGNAL_OPTIONS.map((s) => (
-                    <button
-                      key={s.key}
-                      type="button"
-                      onClick={() => toggleSignal(s.key)}
-                      style={{
-                        border: "1px solid rgba(255,255,255,0.12)",
-                        borderRadius: 999,
-                        background: signals[s.key] ? "#a78bfa" : "#1e2c56",
-                        color: "#fff",
-                        padding: "8px 12px",
-                        cursor: "pointer",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {signals[s.key] ? "✓ " : ""}{s.label}
-                    </button>
+                <select value={selectedId || ""} onChange={(e) => setSelectedId(Number(e.target.value))} style={inputStyle}>
+                  <option value="">Select application</option>
+                  {applications.map((app) => (
+                    <option key={app.id} value={app.id}>
+                      {app.full_name} — {app.email}
+                    </option>
                   ))}
-                </div>
-              </div>
-
-              <div style={{ marginTop: 14 }}>
-                <div style={{ fontWeight: 800, marginBottom: 10 }}>Verification status</div>
-                <select value={simStatus} onChange={(e) => setSimStatus(e.target.value)} style={inputStyle}>
-                  <option value="APPROVED">approved</option>
-                  <option value="REJECTED">rejected</option>
-                  <option value="PENDING">pending</option>
-                  <option value="REVIEW">review</option>
                 </select>
-              </div>
 
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
-                <Badge bg="#0f172a">Risk score: {riskPreview.score}</Badge>
-                <Badge bg={TIER_COLORS[riskPreview.tier]}>{riskPreview.tier}</Badge>
-                <Badge bg="#334155">{riskPreview.action}</Badge>
-              </div>
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 10 }}>Select risk labels / flags</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {SIGNAL_OPTIONS.map((s) => (
+                      <button
+                        key={s.key}
+                        type="button"
+                        onClick={() => toggleSignal(s.key)}
+                        style={{
+                          border: "1px solid rgba(255,255,255,0.12)",
+                          borderRadius: 999,
+                          background: signals[s.key] ? "#a78bfa" : "#1e2c56",
+                          color: "#fff",
+                          padding: "8px 12px",
+                          cursor: "pointer",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {signals[s.key] ? "✓ " : ""}{s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-              <button style={{ ...primaryBtn, marginTop: 16 }} disabled={busy || !selectedApplication} onClick={onSimulateVerification}>
-                Apply Verification Result
-              </button>
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 10 }}>Verification status</div>
+                  <select value={simStatus} onChange={(e) => setSimStatus(e.target.value)} style={inputStyle}>
+                    <option value="APPROVED">approved</option>
+                    <option value="REJECTED">rejected</option>
+                    <option value="PENDING">pending</option>
+                    <option value="REVIEW">review</option>
+                  </select>
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+                  <Badge bg="#0f172a">Risk score: {riskPreview.score}</Badge>
+                  <Badge bg={TIER_COLORS[riskPreview.tier]}>{riskPreview.tier}</Badge>
+                  <Badge bg="#334155">{riskPreview.action}</Badge>
+                </div>
+
+                <button style={{ ...primaryBtn, marginTop: 16 }} disabled={busy || !selectedApplication} onClick={onSimulateVerification}>
+                  Apply Verification Result
+                </button>
+              </div>
             </div>
-          </div>
-        </Section>
+          </Section>
+
+          <ProcessFlowCard
+            result={processResult}
+            onOpenCustomer={() => openLatestCustomerDetail(processResult?.customerId || null)}
+            onOpenContracts={() => setTab("contracts")}
+            onOpenReviews={() => setTab("reviews")}
+          />
+        </>
       )}
 
       {!loading && tab === "dashboard" && (
@@ -592,29 +691,6 @@ export default function App() {
         </Section>
       )}
 
-      {!loading && tab === "verified" && (
-        <Section title="Verified Results" subtitle="Review KYC results and final risk outcomes.">
-          {!verifiedResults.length ? (
-            <EmptyState title="No verified results yet" subtitle="Once verification is processed, results will appear here." />
-          ) : (
-            <SimpleTable
-              headers={["Name", "Email", "KYC Status", "Risk Score", "Risk Tier", "Decision"]}
-              rows={verifiedResults}
-              renderRow={(r) => (
-                <tr key={r.id}>
-                  <td style={thtd}>{r.full_name}</td>
-                  <td style={thtd}>{r.email}</td>
-                  <td style={thtd}><Badge bg={STATUS_COLORS[r.kyc_status] || "#475569"}>{prettyStatus(r.kyc_status)}</Badge></td>
-                  <td style={thtd}>{r.risk_score ?? 0}</td>
-                  <td style={thtd}><Badge bg={TIER_COLORS[r.risk_tier] || "#334155"}>{prettyStatus(r.risk_tier)}</Badge></td>
-                  <td style={thtd}>{prettyStatus(r.decision_status)}</td>
-                </tr>
-              )}
-            />
-          )}
-        </Section>
-      )}
-
       {!loading && tab === "reviews" && (
         <Section title="Compliance Review To-Do Page" subtitle="Medium, high, critical and review-required applications appear here.">
           {!reviews.length ? (
@@ -649,48 +725,6 @@ export default function App() {
                           <button style={smallBtn} onClick={() => onReviewAction(r.id, "REJECT")}>Reject</button>
                           <button style={smallBtn} onClick={() => onReviewAction(r.id, "DONE")}>Done</button>
                           <button style={smallBtn} onClick={() => onReviewAction(r.id, "ESCALATE")}>Escalate</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Section>
-      )}
-
-      {!loading && tab === "monitoring" && (
-        <Section title="Monitoring" subtitle="Standard monitoring queue for medium-risk approved customers.">
-          {!monitoring.length ? (
-            <EmptyState title="No monitoring items" subtitle="Monitoring records will appear for standard monitoring cases." />
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thtd}>Customer</th>
-                    <th style={thtd}>Email</th>
-                    <th style={thtd}>Risk Tier</th>
-                    <th style={thtd}>Frequency</th>
-                    <th style={thtd}>Status</th>
-                    <th style={thtd}>Next Review</th>
-                    <th style={thtd}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monitoring.map((m) => (
-                    <tr key={m.id}>
-                      <td style={thtd}>{m.full_name}</td>
-                      <td style={thtd}>{m.email}</td>
-                      <td style={thtd}><Badge bg={TIER_COLORS[String(m.risk_tier || "").toUpperCase()] || "#334155"}>{prettyStatus(m.risk_tier)}</Badge></td>
-                      <td style={thtd}>{m.frequency}</td>
-                      <td style={thtd}>{m.status}</td>
-                      <td style={thtd}>{m.next_review_at ? new Date(m.next_review_at).toLocaleString() : "-"}</td>
-                      <td style={thtd}>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button style={smallBtn} onClick={() => onMonitoringAction(m.id, "COMPLETE")}>Complete</button>
-                          <button style={smallBtn} onClick={() => onMonitoringAction(m.id, "SNOOZE")}>Snooze</button>
                         </div>
                       </td>
                     </tr>
@@ -741,11 +775,7 @@ export default function App() {
         <Section
           title="Customer Detail Page"
           subtitle="Latest customer detail page with latest customer on top by default."
-          right={
-            <button style={smallBtn} onClick={() => setTab("contracts")}>
-              Go To Contracts Screen
-            </button>
-          }
+          right={<button style={smallBtn} onClick={() => setTab("contracts")}>Go To Contracts Screen</button>}
         >
           {!selectedCustomer?.customer ? (
             <EmptyState title="No customer selected" subtitle="Open a customer from the Customers tab." />

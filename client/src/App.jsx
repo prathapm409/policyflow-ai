@@ -174,9 +174,6 @@ export default function App() {
           listMonitoring(),
         ]);
 
-      if (!summaryRes?.ok) setError(summaryRes?.error || "Failed to load dashboard data");
-      if (!appsRes?.ok) setError(appsRes?.error || "Failed to load applications");
-
       setSummary({
         counts: summaryRes?.counts || {},
         customers: summaryRes?.customers || [],
@@ -212,6 +209,29 @@ export default function App() {
 
   const riskPreview = useMemo(() => calcRisk(signals), [signals]);
   const latestContract = contracts[0] || null;
+
+  async function openLatestCustomerDetail(customerIdFromResponse = null) {
+    await loadAll();
+    let targetCustomerId = customerIdFromResponse;
+
+    if (!targetCustomerId) {
+      const latestCustomer = (await listCustomers())?.customers?.[0];
+      targetCustomerId = latestCustomer?.id;
+    }
+
+    if (!targetCustomerId) {
+      setTab("customers");
+      return;
+    }
+
+    const customerRes = await getCustomer(targetCustomerId);
+    if (customerRes?.ok) {
+      setSelectedCustomer(customerRes);
+      setTab("customer-detail");
+    } else {
+      setTab("customers");
+    }
+  }
 
   async function onCreateApplication(e) {
     e.preventDefault();
@@ -330,9 +350,15 @@ export default function App() {
       setInfo("Verification processed successfully.");
       await loadAll();
 
-      if (res?.nextView === "contracts") setTab("contracts");
-      else if (res?.nextView === "reviews") setTab("reviews");
-      else setTab("verified");
+      const riskTier = String(res?.riskTier || "").toUpperCase();
+
+      if (riskTier === "LOW") {
+        await openLatestCustomerDetail(res?.customer?.id || null);
+      } else if (["MEDIUM", "HIGH", "CRITICAL"].includes(riskTier)) {
+        setTab("reviews");
+      } else {
+        setTab("verified");
+      }
     } catch (e) {
       console.error(e);
       setError("Verification processing failed");
@@ -347,8 +373,11 @@ export default function App() {
     setInfo("");
     const res = await actOnComplianceReview(id, action);
     if (!res?.ok) setError(res?.error || "Failed compliance action");
-    else setInfo(`Compliance review ${action.toLowerCase()} completed.`);
-    await loadAll();
+    else {
+      setInfo(`Compliance review ${action.toLowerCase()} completed.`);
+      await loadAll();
+      setTab("reviews");
+    }
     setBusy(false);
   }
 
@@ -358,8 +387,11 @@ export default function App() {
     setInfo("");
     const res = await actOnMonitoring(id, action);
     if (!res?.ok) setError(res?.error || "Failed monitoring action");
-    else setInfo(`Monitoring ${action.toLowerCase()} completed.`);
-    await loadAll();
+    else {
+      setInfo(`Monitoring ${action.toLowerCase()} completed.`);
+      await loadAll();
+      setTab("monitoring");
+    }
     setBusy(false);
   }
 
@@ -369,8 +401,11 @@ export default function App() {
     setInfo("");
     const res = await regenerateContract(id);
     if (!res?.ok) setError(res?.error || "Failed to regenerate contract");
-    else setInfo("Contract regenerated.");
-    await loadAll();
+    else {
+      setInfo("Contract regenerated.");
+      await loadAll();
+      setTab("contracts");
+    }
     setBusy(false);
   }
 
@@ -410,7 +445,7 @@ export default function App() {
           <button
             key={key}
             onClick={() => setTab(key)}
-            style={{ border: "none", borderRadius: 12, background: tab === key ? "#7c5cff" : "#192857", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}
+            style={{ border: "none", borderRadius: 12, background: tab === key || (key === "customers" && tab === "customer-detail") ? "#7c5cff" : "#192857", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}
           >
             {label}
           </button>
@@ -581,7 +616,7 @@ export default function App() {
       )}
 
       {!loading && tab === "reviews" && (
-        <Section title="Compliance Review" subtitle="Medium, high, critical and review-required applications appear here.">
+        <Section title="Compliance Review To-Do Page" subtitle="Medium, high, critical and review-required applications appear here.">
           {!reviews.length ? (
             <EmptyState title="No compliance review items" subtitle="Review-required items will appear here automatically." />
           ) : (
@@ -703,7 +738,15 @@ export default function App() {
       )}
 
       {!loading && tab === "customer-detail" && (
-        <Section title="Customer Detail" subtitle="Latest customer details with contracts and monitoring.">
+        <Section
+          title="Customer Detail Page"
+          subtitle="Latest customer detail page with latest customer on top by default."
+          right={
+            <button style={smallBtn} onClick={() => setTab("contracts")}>
+              Go To Contracts Screen
+            </button>
+          }
+        >
           {!selectedCustomer?.customer ? (
             <EmptyState title="No customer selected" subtitle="Open a customer from the Customers tab." />
           ) : (
@@ -718,7 +761,7 @@ export default function App() {
                 </div>
               </div>
 
-              <Section title="Customer Contracts" subtitle="">
+              <Section title="Customer Contracts" subtitle="Generated contract list for this customer.">
                 {!selectedCustomer.contracts?.length ? (
                   <EmptyState title="No contracts" subtitle="No contracts available for this customer." />
                 ) : (
@@ -746,7 +789,7 @@ export default function App() {
 
       {!loading && tab === "contracts" && (
         <Section
-          title="Contracts"
+          title="Contracts Screen"
           subtitle="Latest contract appears first. Open the PDF from the action link."
           right={latestContract ? <Badge bg="#dbeafe" color="#1e3a8a">Latest contract: {latestContract.policy_number}</Badge> : null}
         >

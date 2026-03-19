@@ -1,0 +1,11 @@
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS external_applicant_id TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS risk_tier TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS monitoring_frequency TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS customer_id INTEGER;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS contract_id INTEGER;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS decision_status TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS compliance_status TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS policy_status TEXT;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS risk_override_tier TEXT;

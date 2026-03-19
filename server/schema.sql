@@ -12,21 +12,41 @@ CREATE TABLE IF NOT EXISTS customers (
   full_name TEXT,
   email TEXT,
   risk_tier TEXT,
+  risk_score INTEGER DEFAULT 0,
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS customers_external_id_unique ON customers(external_id);
 
 CREATE TABLE IF NOT EXISTS contracts (
   id SERIAL PRIMARY KEY,
   customer_id INTEGER REFERENCES customers(id),
-  policy_number TEXT,
+  policy_number TEXT UNIQUE,
   status TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMP DEFAULT NOW(),
+  coverage_start TIMESTAMPTZ,
+  coverage_end TIMESTAMPTZ,
+  coverage_description TEXT,
+  coverage_limit TEXT,
+  deductible TEXT,
+  premium TEXT,
+  payment_frequency TEXT,
+  insurer TEXT,
+  insurer_address TEXT,
+  policyholder_address TEXT,
+  dob DATE,
+  sumsub_verification_id TEXT,
+  sumsub_status TEXT,
+  sumsub_verified_at TIMESTAMPTZ,
+  monitoring_frequency TEXT
 );
 
 CREATE TABLE IF NOT EXISTS monitoring (
   id SERIAL PRIMARY KEY,
   customer_id INTEGER REFERENCES customers(id),
   frequency TEXT,
+  status TEXT DEFAULT 'ACTIVE',
+  next_review_at TIMESTAMPTZ,
   created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -42,21 +62,19 @@ CREATE TABLE IF NOT EXISTS applications (
   full_name TEXT NOT NULL,
   email TEXT NOT NULL,
   kyc_status TEXT NOT NULL DEFAULT 'PENDING_KYC',
+  external_applicant_id TEXT,
+  updated_at TIMESTAMP DEFAULT NOW(),
+  risk_tier TEXT,
+  risk_override_tier TEXT,
+  monitoring_frequency TEXT,
+  customer_id INTEGER,
+  contract_id INTEGER,
+  risk_score INTEGER DEFAULT 0,
+  decision_status TEXT,
+  compliance_status TEXT,
+  policy_status TEXT,
   created_at TIMESTAMP DEFAULT NOW()
 );
-
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS external_applicant_id TEXT;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS risk_tier TEXT;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS monitoring_frequency TEXT;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS customer_id INTEGER;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS contract_id INTEGER;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS decision_status TEXT;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS compliance_status TEXT;
-ALTER TABLE applications ADD COLUMN IF NOT EXISTS policy_status TEXT;
-
-ALTER TABLE customers ADD COLUMN IF NOT EXISTS risk_score INTEGER DEFAULT 0;
 
 DO $$
 BEGIN

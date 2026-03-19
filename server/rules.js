@@ -6,7 +6,9 @@ function normalizeSignals(input = {}) {
     documentFraudDetected: Boolean(input.documentFraudDetected),
     faceMismatch: Boolean(input.faceMismatch),
     highRiskCountry: Boolean(input.highRiskCountry),
-    deviceOrIpMismatch: Boolean(input.deviceOrIpMismatch),
+    deviceRisk: Boolean(input.deviceRisk),
+    ipMismatch: Boolean(input.ipMismatch),
+    deviceOrIpMismatch: Boolean(input.deviceOrIpMismatch || input.deviceRisk || input.ipMismatch),
     manualReviewRequired: Boolean(input.manualReviewRequired),
   };
 }
@@ -18,40 +20,42 @@ function calculateRiskScore(signalsInput = {}) {
 
   if (signals.pepMatch) {
     score += 50;
-    reasons.push("PEP match detected (+50)");
+    reasons.push("PEP");
   }
   if (signals.sanctionsMatch) {
     score += 100;
-    reasons.push("Sanctions/watchlist match detected (+100)");
+    reasons.push("Sanctions");
   }
   if (signals.adverseMedia) {
     score += 40;
-    reasons.push("Adverse media match detected (+40)");
+    reasons.push("Adverse media");
   }
   if (signals.documentFraudDetected) {
     score += 60;
-    reasons.push("Document fraud/tampering detected (+60)");
+    reasons.push("Document fraud");
   }
   if (signals.faceMismatch) {
     score += 40;
-    reasons.push("Face mismatch detected (+40)");
+    reasons.push("Face mismatch");
   }
   if (signals.highRiskCountry) {
     score += 30;
-    reasons.push("High-risk country detected (+30)");
+    reasons.push("Country risk");
   }
-  if (signals.deviceOrIpMismatch) {
+  if (signals.deviceRisk) {
     score += 20;
-    reasons.push("Device/IP mismatch detected (+20)");
+    reasons.push("Device risk");
+  }
+  if (signals.ipMismatch) {
+    score += 20;
+    reasons.push("IP mismatch");
   }
   if (signals.manualReviewRequired) {
     score += 20;
-    reasons.push("Manual review required (+20)");
+    reasons.push("Manual review");
   }
 
-  if (reasons.length === 0) {
-    reasons.push("No material risk signals detected (0)");
-  }
+  if (reasons.length === 0) reasons.push("No material risk signals detected");
 
   return { score, signals, reasons };
 }
@@ -83,7 +87,6 @@ function determineKycDecision({ verificationStatus, riskTier }) {
 function monitoringFrequencyForTier(riskTier) {
   if (riskTier === "LOW") return "12_MONTHS";
   if (riskTier === "MEDIUM") return "6_MONTHS";
-  if (riskTier === "HIGH") return "QUARTERLY";
   return null;
 }
 

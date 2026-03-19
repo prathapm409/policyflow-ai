@@ -1,64 +1,104 @@
 import React, { useEffect, useState } from "react";
-import { postJson } from "../api";
+import { listVerifiedResults, sendToComplianceReview } from "../api";
 
 export default function VerifiedKycList() {
   const [items, setItems] = useState([]);
-  const [runningId, setRunningId] = useState(null);
+  const [successfulOnly, setSuccessfulOnly] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+
+  async function load() {
+    const res = await listVerifiedResults(successfulOnly);
+    setItems(res.results || []);
+  }
 
   useEffect(() => {
-    const sample = [
-      { applicantId: "TEST-LOW-1", name: "James Carter", email: "james.carter@example.com", status: "approved" },
-      { applicantId: "TEST-MED-1", name: "A. Medium", email: "med@example.com", status: "approved" },
-      { applicantId: "TEST-HIGH-1", name: "B. High", email: "high@example.com", status: "approved" },
-    ];
-    setItems(sample);
-  }, []);
+    load();
+  }, [successfulOnly]);
 
-  async function runAssignment(applicantId) {
-    setRunningId(applicantId);
+  async function handleSendToCompliance(applicationId) {
+    setBusyId(applicationId);
     try {
-      const payload = { applicantId, status: "approved", fullName: applicantId === "TEST-LOW-1" ? "James Carter" : "User", email: `${applicantId}@example.com` };
-      const out = await postJson("/api/webhook/sumsub", payload);
-      if (out?.contract?.id) {
-        window.open(`/api/contracts/${out.contract.id}/pdf`, "_blank");
-      } else {
-        alert("Processed: " + JSON.stringify(out));
+      const res = await sendToComplianceReview(applicationId);
+      if (!res?.ok) {
+        alert(res?.error || "Failed to send to compliance");
+        return;
       }
-    } catch (err) {
-      console.error(err);
-      alert("Run failed: " + (err?.body?.error || err.message || JSON.stringify(err)));
+      await load();
+      alert("Sent to compliance review");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to send to compliance");
     } finally {
-      setRunningId(null);
+      setBusyId(null);
     }
   }
 
   return (
     <div>
       <h2>Verified KYC results</h2>
-      <p>Click Run to execute risk assignment & automation for a test case.</p>
+      <p>Internal analyst view of verified outcomes, final risk score, and next action.</p>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button
+          className={!successfulOnly ? "secondary" : ""}
+          onClick={() => setSuccessfulOnly(false)}
+        >
+          All
+        </button>
+        <button
+          className={successfulOnly ? "" : "secondary"}
+          onClick={() => setSuccessfulOnly(true)}
+        >
+          Successful KYC only
+        </button>
+      </div>
 
       <table>
         <thead>
           <tr>
-            <th>Applicant</th>
+            <th>Name</th>
             <th>Email</th>
-            <th>Status</th>
+            <th>KYC</th>
+            <th>Risk Score</th>
+            <th>Risk Tier</th>
+            <th>Decision</th>
+            <th>Monitoring</th>
             <th>Action</th>
           </tr>
         </thead>
         <tbody>
-          {items.map((it) => (
-            <tr key={it.applicantId}>
-              <td>{it.name} <small>({it.applicantId})</small></td>
-              <td>{it.email}</td>
-              <td>{it.status}</td>
-              <td>
-                <button className="small" disabled={runningId === it.applicantId} onClick={() => runAssignment(it.applicantId)}>
-                  {runningId === it.applicantId ? "Running..." : "Run"}
-                </button>
-              </td>
+          {items.map((it) => {
+            const highRisk = ["HIGH", "CRITICAL"].includes(String(it.risk_tier || "").toUpperCase());
+            return (
+              <tr key={it.id}>
+                <td>{it.full_name}</td>
+                <td>{it.email}</td>
+                <td>{it.kyc_status}</td>
+                <td>{it.risk_score ?? 0}</td>
+                <td>{it.risk_tier || "-"}</td>
+                <td>{it.decision_status || "-"}</td>
+                <td>{it.monitoring_frequency || "-"}</td>
+                <td>
+                  {highRisk ? (
+                    <button
+                      className="danger"
+                      disabled={busyId === it.id}
+                      onClick={() => handleSendToCompliance(it.id)}
+                    >
+                      {busyId === it.id ? "Sending..." : "Send to Compliance"}
+                    </button>
+                  ) : (
+                    "-"
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+          {items.length === 0 && (
+            <tr>
+              <td colSpan="8">No items</td>
             </tr>
-          ))}
+          )}
         </tbody>
       </table>
     </div>

@@ -58,6 +58,14 @@ export async function regenerateContract(id) {
   return jsonFetch(`/api/contracts/${id}/regenerate`, { method: "POST" });
 }
 
+export async function updateContract(id, payload) {
+  return jsonFetch(`/api/contracts/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function listComplianceReviews() {
   return jsonFetch("/api/compliance-reviews");
 }
@@ -70,8 +78,9 @@ export async function actOnComplianceReview(id, action) {
   });
 }
 
-export async function listVerifiedResults() {
-  return jsonFetch("/api/verified-results");
+export async function listVerifiedResults(successfulOnly = false) {
+  const qs = successfulOnly ? "?successfulOnly=true" : "";
+  return jsonFetch(`/api/verified-results${qs}`);
 }
 
 export async function overrideRiskTier(applicationId, riskTier) {
@@ -91,6 +100,12 @@ export async function actOnMonitoring(id, action) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action }),
+  });
+}
+
+export async function sendToComplianceReview(applicationId) {
+  return jsonFetch(`/api/applications/${applicationId}/send-to-compliance`, {
+    method: "POST",
   });
 }
 

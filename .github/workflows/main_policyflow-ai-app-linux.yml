@@ -48,18 +48,13 @@ jobs:
         with:
           name: node-app
       
-      - name: Login to Azure
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_613501A7F8094DDF94C0ADE739ACA36E }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_80BAE7E21E5F43099157083B53B9DD49 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_AAFB7FB647284712BF5FFBB54E3E8D5F }}
-
+  
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'policyflow-ai-app-linux-2'
           slot-name: 'Production'
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: .
           

@@ -32,6 +32,10 @@ const STATUS_COLORS = {
   ACTIVE: "#16a34a",
   COMPLETED: "#2563eb",
   SNOOZED: "#f59e0b",
+  IN_REVIEW: "#7c3aed",
+  NOT_STARTED: "#475569",
+  ESCALATED: "#dc2626",
+  REJECTED_STATUS: "#dc2626",
 };
 
 const TIER_COLORS = {
@@ -61,21 +65,55 @@ function calcRisk(signals) {
   let score = 0;
   const sourceReasons = [];
 
-  if (signals.pepMatch) { score += 50; sourceReasons.push("PEP"); }
-  if (signals.sanctionsMatch) { score += 100; sourceReasons.push("Sanctions"); }
-  if (signals.adverseMedia) { score += 40; sourceReasons.push("Adverse media"); }
-  if (signals.documentFraudDetected) { score += 60; sourceReasons.push("Document fraud"); }
-  if (signals.faceMismatch) { score += 40; sourceReasons.push("Face mismatch"); }
-  if (signals.highRiskCountry) { score += 30; sourceReasons.push("Country risk"); }
-  if (signals.deviceRisk) { score += 20; sourceReasons.push("Device risk"); }
-  if (signals.ipMismatch) { score += 20; sourceReasons.push("IP mismatch"); }
-  if (signals.manualReviewRequired) { score += 20; sourceReasons.push("Manual review"); }
+  if (signals.pepMatch) {
+    score += 50;
+    sourceReasons.push("PEP");
+  }
+  if (signals.sanctionsMatch) {
+    score += 100;
+    sourceReasons.push("Sanctions");
+  }
+  if (signals.adverseMedia) {
+    score += 40;
+    sourceReasons.push("Adverse media");
+  }
+  if (signals.documentFraudDetected) {
+    score += 60;
+    sourceReasons.push("Document fraud");
+  }
+  if (signals.faceMismatch) {
+    score += 40;
+    sourceReasons.push("Face mismatch");
+  }
+  if (signals.highRiskCountry) {
+    score += 30;
+    sourceReasons.push("Country risk");
+  }
+  if (signals.deviceRisk) {
+    score += 20;
+    sourceReasons.push("Device risk");
+  }
+  if (signals.ipMismatch) {
+    score += 20;
+    sourceReasons.push("IP mismatch");
+  }
+  if (signals.manualReviewRequired) {
+    score += 20;
+    sourceReasons.push("Manual review");
+  }
 
   let tier = "LOW";
   let action = "Auto approve";
-  if (score >= 80) { tier = "CRITICAL"; action = "Reject / escalate"; }
-  else if (score >= 51) { tier = "HIGH"; action = "Manual review"; }
-  else if (score >= 21) { tier = "MEDIUM"; action = "Standard monitoring"; }
+  if (score >= 80) {
+    tier = "CRITICAL";
+    action = "Reject / escalate";
+  } else if (score >= 51) {
+    tier = "HIGH";
+    action = "Manual review";
+  } else if (score >= 21) {
+    tier = "MEDIUM";
+    action = "Standard monitoring";
+  }
 
   return { score, tier, action, sourceReasons };
 }
@@ -115,7 +153,19 @@ function getProcessSteps(riskTier) {
 
 function Badge({ children, bg = "#1e293b", color = "#fff" }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", padding: "6px 10px", borderRadius: 999, background: bg, color, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "6px 10px",
+        borderRadius: 999,
+        background: bg,
+        color,
+        fontSize: 12,
+        fontWeight: 700,
+        whiteSpace: "nowrap",
+      }}
+    >
       {children}
     </span>
   );
@@ -123,8 +173,24 @@ function Badge({ children, bg = "#1e293b", color = "#fff" }) {
 
 function Section({ title, subtitle, children, right }) {
   return (
-    <section style={{ background: "#122041", borderRadius: 18, padding: 20, marginBottom: 20, boxShadow: "0 10px 24px rgba(0,0,0,0.18)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+    <section
+      style={{
+        background: "#122041",
+        borderRadius: 18,
+        padding: 20,
+        marginBottom: 20,
+        boxShadow: "0 10px 24px rgba(0,0,0,0.18)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+          marginBottom: 12,
+        }}
+      >
         <div>
           <h2 style={{ margin: 0, fontSize: 28 }}>{title}</h2>
           {subtitle ? <div style={{ opacity: 0.8, marginTop: 6 }}>{subtitle}</div> : null}
@@ -138,7 +204,16 @@ function Section({ title, subtitle, children, right }) {
 
 function EmptyState({ title, subtitle }) {
   return (
-    <div style={{ padding: 24, borderRadius: 16, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", textAlign: "center", color: "#cbd5e1" }}>
+    <div
+      style={{
+        padding: 24,
+        borderRadius: 16,
+        background: "rgba(255,255,255,0.04)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        textAlign: "center",
+        color: "#cbd5e1",
+      }}
+    >
       <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{title}</div>
       <div style={{ opacity: 0.85 }}>{subtitle}</div>
     </div>
@@ -169,16 +244,18 @@ function ProcessFlowCard({ result }) {
               border: "1px solid rgba(255,255,255,0.08)",
             }}
           >
-            <div style={{
-              width: 34,
-              height: 34,
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "#7c5cff",
-              fontWeight: 900
-            }}>
+            <div
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: "50%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#7c5cff",
+                fontWeight: 900,
+              }}
+            >
               {index + 1}
             </div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>{step}</div>
@@ -191,7 +268,9 @@ function ProcessFlowCard({ result }) {
           <div style={{ fontWeight: 800, marginBottom: 8 }}>AML / Risk source traceability</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {result.amlReasons.map((r) => (
-              <Badge key={r} bg="#334155">{r}</Badge>
+              <Badge key={r} bg="#334155">
+                {r}
+              </Badge>
             ))}
           </div>
         </div>
@@ -202,6 +281,7 @@ function ProcessFlowCard({ result }) {
 
 function KycModal({ open, onClose, title }) {
   if (!open) return null;
+
   return (
     <div style={modalBackdrop}>
       <div style={modalCard}>
@@ -212,10 +292,29 @@ function KycModal({ open, onClose, title }) {
               Complete document verification and selfie/liveness in this window.
             </div>
           </div>
-          <button style={closeBtn} onClick={onClose}>✕</button>
+          <button style={closeBtn} onClick={onClose}>
+            ✕
+          </button>
         </div>
-        <div id="sumsub-websdk-container" style={{ minHeight: "78vh", borderRadius: 12, overflow: "hidden", background: "#fff" }} />
+        <div
+          id="sumsub-websdk-container"
+          style={{
+            minHeight: "78vh",
+            borderRadius: 12,
+            overflow: "hidden",
+            background: "#fff",
+          }}
+        />
       </div>
+    </div>
+  );
+}
+
+function MetricCard({ label, value }) {
+  return (
+    <div style={{ background: "#122041", borderRadius: 16, padding: 18, minWidth: 180 }}>
+      <div style={{ opacity: 0.8, marginBottom: 10, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 34, fontWeight: 900 }}>{value}</div>
     </div>
   );
 }
@@ -257,17 +356,25 @@ export default function App() {
 
   async function loadAll() {
     setLoading(true);
+    setError("");
     try {
-      const [summaryRes, appsRes, contractsRes, customersRes, reviewsRes, verifiedRes, monitoringRes] =
-        await Promise.all([
-          getSummary(),
-          listApplications(),
-          listContracts(),
-          listCustomers(),
-          listComplianceReviews(),
-          listVerifiedResults(),
-          listMonitoring(),
-        ]);
+      const [
+        summaryRes,
+        appsRes,
+        contractsRes,
+        customersRes,
+        reviewsRes,
+        verifiedRes,
+        monitoringRes,
+      ] = await Promise.all([
+        getSummary(),
+        listApplications(),
+        listContracts(),
+        listCustomers(),
+        listComplianceReviews(),
+        listVerifiedResults(),
+        listMonitoring(),
+      ]);
 
       setSummary({
         counts: summaryRes?.counts || {},
@@ -333,12 +440,16 @@ export default function App() {
     setInfo("");
     try {
       const res = await createApplication(form);
-      if (!res?.ok) return setError(res?.error || "Failed to create application");
+      if (!res?.ok) {
+        setError(res?.error || "Failed to create application");
+        return;
+      }
       setInfo("Application created successfully.");
       setForm({ fullName: "", email: "" });
       await loadAll();
       setTab("applications");
-    } catch {
+    } catch (e) {
+      console.error(e);
       setError("Create application failed");
     } finally {
       setBusy(false);
@@ -351,17 +462,25 @@ export default function App() {
     setInfo("");
     try {
       const res = await startKyc(app.id);
-      if (!res?.ok) return setError(res?.error || "Failed to start Sumsub");
-      if (!res?.sumsubToken) return setError("Sumsub token was not returned by backend.");
-      if (!window?.snsWebSdk) return setError("Sumsub WebSDK script not loaded.");
+      if (!res?.ok) {
+        setError(res?.error || "Failed to start Sumsub");
+        return;
+      }
+      if (!res?.sumsubToken) {
+        setError("Sumsub token was not returned by backend.");
+        return;
+      }
+      if (!window?.snsWebSdk) {
+        setError("Sumsub WebSDK script not loaded.");
+        return;
+      }
 
       setKycTitle(`Sumsub Verification — ${app.full_name}`);
       setKycModalOpen(true);
 
       setTimeout(() => {
         try {
-          window
-            .snsWebSdk
+          window.snsWebSdk
             .init(res.sumsubToken, () => Promise.resolve(res.sumsubToken))
             .withConf({ lang: "en" })
             .withOptions({ addViewportTag: false, adaptIframeHeight: true })
@@ -370,13 +489,16 @@ export default function App() {
             })
             .build()
             .launch("#sumsub-websdk-container");
+
           setInfo("Sumsub verification opened.");
-        } catch {
+        } catch (err) {
+          console.error(err);
           setError("Sumsub popup failed to open.");
           setKycModalOpen(false);
         }
       }, 100);
-    } catch {
+    } catch (e) {
+      console.error(e);
       setError("Start Sumsub failed");
     } finally {
       setBusy(false);
@@ -389,10 +511,14 @@ export default function App() {
     setInfo("");
     try {
       const res = await overrideRiskTier(applicationId, riskTier);
-      if (!res?.ok) return setError(res?.error || "Failed to override risk tier");
+      if (!res?.ok) {
+        setError(res?.error || "Failed to override risk tier");
+        return;
+      }
       setInfo(`Risk tier updated to ${riskTier}.`);
       await loadAll();
-    } catch {
+    } catch (e) {
+      console.error(e);
       setError("Risk tier override failed");
     } finally {
       setBusy(false);
@@ -401,7 +527,8 @@ export default function App() {
 
   async function onSimulateVerification() {
     if (!selectedApplication?.external_applicant_id) {
-      return setError("Start KYC first so an applicant ID exists.");
+      setError("Start KYC first so an applicant ID exists.");
+      return;
     }
 
     setBusy(true);
@@ -445,7 +572,8 @@ export default function App() {
       } else {
         setTab("workflow");
       }
-    } catch {
+    } catch (e) {
+      console.error(e);
       const fallback = calcRisk(signals);
       setProcessResult({
         riskTier: fallback.tier,
@@ -463,55 +591,83 @@ export default function App() {
     setBusy(true);
     setError("");
     setInfo("");
-    const res = await actOnComplianceReview(id, action);
-    if (!res?.ok) setError(res?.error || "Failed compliance action");
-    else {
+    try {
+      const res = await actOnComplianceReview(id, action);
+      if (!res?.ok) {
+        setError(res?.error || "Failed compliance action");
+        return;
+      }
       setInfo(`Compliance review ${action.toLowerCase()} completed.`);
       await loadAll();
       setTab("reviews");
+    } catch (e) {
+      console.error(e);
+      setError("Failed compliance action");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   async function onMonitoringAction(id, action) {
     setBusy(true);
     setError("");
     setInfo("");
-    const res = await actOnMonitoring(id, action);
-    if (!res?.ok) setError(res?.error || "Failed monitoring action");
-    else {
+    try {
+      const res = await actOnMonitoring(id, action);
+      if (!res?.ok) {
+        setError(res?.error || "Failed monitoring action");
+        return;
+      }
       setInfo(`Monitoring ${action.toLowerCase()} completed.`);
       await loadAll();
       setTab("monitoring");
+    } catch (e) {
+      console.error(e);
+      setError("Failed monitoring action");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   async function onRegenerateContract(id) {
     setBusy(true);
     setError("");
     setInfo("");
-    const res = await regenerateContract(id);
-    if (!res?.ok) setError(res?.error || "Failed to regenerate contract");
-    else {
+    try {
+      const res = await regenerateContract(id);
+      if (!res?.ok) {
+        setError(res?.error || "Failed to regenerate contract");
+        return;
+      }
       setInfo("Contract regenerated.");
       await loadAll();
       setTab("contracts");
+    } catch (e) {
+      console.error(e);
+      setError("Failed to regenerate contract");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   async function onOpenCustomer(id) {
     setBusy(true);
     setError("");
     setInfo("");
-    const res = await getCustomer(id);
-    if (!res?.ok) setError(res?.error || "Failed to load customer");
-    else {
+    try {
+      const res = await getCustomer(id);
+      if (!res?.ok) {
+        setError(res?.error || "Failed to load customer");
+        return;
+      }
       setSelectedCustomer(res);
       setTab("customer-detail");
+    } catch (e) {
+      console.error(e);
+      setError("Failed to load customer");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   function toggleSignal(key) {
@@ -519,8 +675,18 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #031133 0%, #081634 30%, #0d1730 100%)", color: "#fff", fontFamily: "Inter, Arial, sans-serif", padding: 18 }}>
-      <h1 style={{ margin: "8px 0 18px", fontSize: 38, fontWeight: 900 }}>PolicyFlow AI Dashboard</h1>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "linear-gradient(180deg, #031133 0%, #081634 30%, #0d1730 100%)",
+        color: "#fff",
+        fontFamily: "Inter, Arial, sans-serif",
+        padding: 18,
+      }}
+    >
+      <h1 style={{ margin: "8px 0 18px", fontSize: 38, fontWeight: 900 }}>
+        PolicyFlow AI Dashboard
+      </h1>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
         {[
@@ -537,34 +703,91 @@ export default function App() {
           <button
             key={key}
             onClick={() => setTab(key)}
-            style={{ border: "none", borderRadius: 12, background: tab === key || (key === "customers" && tab === "customer-detail") ? "#7c5cff" : "#192857", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" }}
+            style={{
+              border: "none",
+              borderRadius: 12,
+              background:
+                tab === key || (key === "customers" && tab === "customer-detail")
+                  ? "#7c5cff"
+                  : "#192857",
+              color: "#fff",
+              padding: "12px 16px",
+              fontWeight: 800,
+              cursor: "pointer",
+              letterSpacing: 0.3,
+            }}
           >
             {label}
           </button>
         ))}
       </div>
 
-      {error ? <div style={{ background: "#521323", color: "#fecdd3", padding: 14, borderRadius: 12, marginBottom: 14 }}>{error}</div> : null}
-      {info ? <div style={{ background: "#123f2b", color: "#bbf7d0", padding: 14, borderRadius: 12, marginBottom: 14 }}>{info}</div> : null}
+      {error ? (
+        <div
+          style={{
+            background: "#521323",
+            color: "#fecdd3",
+            padding: 14,
+            borderRadius: 12,
+            marginBottom: 14,
+          }}
+        >
+          {error}
+        </div>
+      ) : null}
+
+      {info ? (
+        <div
+          style={{
+            background: "#123f2b",
+            color: "#bbf7d0",
+            padding: 14,
+            borderRadius: 12,
+            marginBottom: 14,
+          }}
+        >
+          {info}
+        </div>
+      ) : null}
+
       {loading ? <div>Loading...</div> : null}
 
       {!loading && tab === "workflow" && (
         <>
-          <Section title="KYC Workflow" subtitle="Create an application, launch Sumsub, review risk signals, and simulate verification outcomes.">
+          <Section
+            title="KYC Workflow"
+            subtitle="Create an application, launch Sumsub, review risk signals, and simulate verification outcomes."
+          >
             <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 18 }}>
               <div style={panelStyle}>
                 <h3 style={h3Style}>Create application</h3>
                 <form onSubmit={onCreateApplication} style={{ display: "grid", gap: 12 }}>
-                  <input placeholder="Full name" value={form.fullName} onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))} style={inputStyle} />
-                  <input placeholder="Email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} style={inputStyle} />
-                  <button type="submit" style={primaryBtn} disabled={busy}>Create Application</button>
+                  <input
+                    placeholder="Full name"
+                    value={form.fullName}
+                    onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))}
+                    style={inputStyle}
+                  />
+                  <input
+                    placeholder="Email"
+                    value={form.email}
+                    onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
+                    style={inputStyle}
+                  />
+                  <button type="submit" style={primaryBtn} disabled={busy}>
+                    Create Application
+                  </button>
                 </form>
               </div>
 
               <div style={panelStyle}>
                 <h3 style={h3Style}>Risk signals and verification</h3>
 
-                <select value={selectedId || ""} onChange={(e) => setSelectedId(Number(e.target.value))} style={inputStyle}>
+                <select
+                  value={selectedId || ""}
+                  onChange={(e) => setSelectedId(Number(e.target.value))}
+                  style={inputStyle}
+                >
                   <option value="">Select application</option>
                   {applications.map((app) => (
                     <option key={app.id} value={app.id}>
@@ -591,7 +814,8 @@ export default function App() {
                           fontWeight: 700,
                         }}
                       >
-                        {signals[s.key] ? "✓ " : ""}{s.label}
+                        {signals[s.key] ? "✓ " : ""}
+                        {s.label}
                       </button>
                     ))}
                   </div>
@@ -599,7 +823,11 @@ export default function App() {
 
                 <div style={{ marginTop: 14 }}>
                   <div style={{ fontWeight: 800, marginBottom: 10 }}>Verification status</div>
-                  <select value={simStatus} onChange={(e) => setSimStatus(e.target.value)} style={inputStyle}>
+                  <select
+                    value={simStatus}
+                    onChange={(e) => setSimStatus(e.target.value)}
+                    style={inputStyle}
+                  >
                     <option value="APPROVED">approved</option>
                     <option value="REJECTED">rejected</option>
                     <option value="PENDING">pending</option>
@@ -618,15 +846,31 @@ export default function App() {
                     <div style={{ fontWeight: 800, marginBottom: 8 }}>Risk source traceability</div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {riskPreview.sourceReasons.map((r) => (
-                        <Badge key={r} bg="#334155">{r}</Badge>
+                        <Badge key={r} bg="#334155">
+                          {r}
+                        </Badge>
                       ))}
                     </div>
                   </div>
                 ) : null}
 
-                <button style={{ ...primaryBtn, marginTop: 16 }} disabled={busy || !selectedApplication} onClick={onSimulateVerification}>
-                  Apply Verification Result
-                </button>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+                  <button
+                    style={secondaryBtn}
+                    disabled={busy || !selectedApplication}
+                    onClick={() => selectedApplication && onStartKyc(selectedApplication)}
+                  >
+                    Start Sumsub
+                  </button>
+
+                  <button
+                    style={primaryBtn}
+                    disabled={busy || !selectedApplication}
+                    onClick={onSimulateVerification}
+                  >
+                    Apply Verification Result
+                  </button>
+                </div>
               </div>
             </div>
           </Section>
@@ -638,7 +882,10 @@ export default function App() {
       {!loading && tab === "verified" && (
         <Section title="Verified Results" subtitle="Verification results list.">
           {!verifiedResults.length ? (
-            <EmptyState title="No verified results yet" subtitle="Use Workflow tab and Apply Verification Result." />
+            <EmptyState
+              title="No verified results yet"
+              subtitle="Use Workflow tab and Apply Verification Result."
+            />
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
@@ -657,9 +904,17 @@ export default function App() {
                     <tr key={r.id}>
                       <td style={thtd}>{r.full_name}</td>
                       <td style={thtd}>{r.email}</td>
-                      <td style={thtd}><Badge bg={STATUS_COLORS[r.kyc_status] || "#475569"}>{prettyStatus(r.kyc_status)}</Badge></td>
+                      <td style={thtd}>
+                        <Badge bg={STATUS_COLORS[r.kyc_status] || "#475569"}>
+                          {prettyStatus(r.kyc_status)}
+                        </Badge>
+                      </td>
                       <td style={thtd}>{r.risk_score ?? 0}</td>
-                      <td style={thtd}><Badge bg={TIER_COLORS[r.risk_tier] || "#334155"}>{prettyStatus(r.risk_tier)}</Badge></td>
+                      <td style={thtd}>
+                        <Badge bg={TIER_COLORS[r.risk_tier] || "#334155"}>
+                          {prettyStatus(r.risk_tier)}
+                        </Badge>
+                      </td>
                       <td style={thtd}>{prettyStatus(r.decision_status)}</td>
                     </tr>
                   ))}
@@ -671,9 +926,15 @@ export default function App() {
       )}
 
       {!loading && tab === "reviews" && (
-        <Section title="Compliance Review To-Do Page" subtitle="Medium, high and critical review queue.">
+        <Section
+          title="Compliance Review To-Do Page"
+          subtitle="Medium, high and critical review queue."
+        >
           {!reviews.length ? (
-            <EmptyState title="No compliance review items" subtitle="Use medium/high/critical process in Workflow tab." />
+            <EmptyState
+              title="No compliance review items"
+              subtitle="Use medium/high/critical process in Workflow tab."
+            />
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
@@ -692,14 +953,24 @@ export default function App() {
                     <tr key={r.id}>
                       <td style={thtd}>{r.applicant_id}</td>
                       <td style={thtd}>{r.risk_score}</td>
-                      <td style={thtd}><Badge bg={TIER_COLORS[r.risk_tier] || "#334155"}>{prettyStatus(r.risk_tier)}</Badge></td>
+                      <td style={thtd}>
+                        <Badge bg={TIER_COLORS[r.risk_tier] || "#334155"}>
+                          {prettyStatus(r.risk_tier)}
+                        </Badge>
+                      </td>
                       <td style={thtd}>{r.status}</td>
                       <td style={thtd}>{r.reason}</td>
                       <td style={thtd}>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button style={smallBtn} onClick={() => onReviewAction(r.id, "START")}>Start</button>
-                          <button style={smallBtn} onClick={() => onReviewAction(r.id, "APPROVE")}>Approve</button>
-                          <button style={smallBtn} onClick={() => onReviewAction(r.id, "DONE")}>Done</button>
+                          <button style={smallBtn} onClick={() => onReviewAction(r.id, "START")}>
+                            Start
+                          </button>
+                          <button style={smallBtn} onClick={() => onReviewAction(r.id, "APPROVE")}>
+                            Approve
+                          </button>
+                          <button style={smallBtn} onClick={() => onReviewAction(r.id, "DONE")}>
+                            Done
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -714,7 +985,10 @@ export default function App() {
       {!loading && tab === "monitoring" && (
         <Section title="Monitoring" subtitle="Monitoring queue.">
           {!monitoring.length ? (
-            <EmptyState title="No monitoring items yet" subtitle="Monitoring records will appear here when created." />
+            <EmptyState
+              title="No monitoring items yet"
+              subtitle="Monitoring records will appear here when created."
+            />
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
@@ -734,14 +1008,36 @@ export default function App() {
                     <tr key={m.id}>
                       <td style={thtd}>{m.full_name}</td>
                       <td style={thtd}>{m.email}</td>
-                      <td style={thtd}><Badge bg={TIER_COLORS[String(m.risk_tier || "").toUpperCase()] || "#334155"}>{prettyStatus(m.risk_tier)}</Badge></td>
+                      <td style={thtd}>
+                        <Badge
+                          bg={
+                            TIER_COLORS[String(m.risk_tier || "").toUpperCase()] || "#334155"
+                          }
+                        >
+                          {prettyStatus(m.risk_tier)}
+                        </Badge>
+                      </td>
                       <td style={thtd}>{m.frequency}</td>
-                      <td style={thtd}><Badge bg={STATUS_COLORS[m.status] || "#475569"}>{m.status}</Badge></td>
-                      <td style={thtd}>{m.next_review_at ? new Date(m.next_review_at).toLocaleString() : "-"}</td>
+                      <td style={thtd}>
+                        <Badge bg={STATUS_COLORS[m.status] || "#475569"}>{m.status}</Badge>
+                      </td>
+                      <td style={thtd}>
+                        {m.next_review_at ? new Date(m.next_review_at).toLocaleString() : "-"}
+                      </td>
                       <td style={thtd}>
                         <div style={{ display: "flex", gap: 8 }}>
-                          <button style={smallBtn} onClick={() => onMonitoringAction(m.id, "COMPLETE")}>Complete</button>
-                          <button style={smallBtn} onClick={() => onMonitoringAction(m.id, "SNOOZE")}>Snooze</button>
+                          <button
+                            style={smallBtn}
+                            onClick={() => onMonitoringAction(m.id, "COMPLETE")}
+                          >
+                            Complete
+                          </button>
+                          <button
+                            style={smallBtn}
+                            onClick={() => onMonitoringAction(m.id, "SNOOZE")}
+                          >
+                            Snooze
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -774,10 +1070,20 @@ export default function App() {
                     <tr key={c.id}>
                       <td style={thtd}>{c.full_name}</td>
                       <td style={thtd}>{c.email}</td>
-                      <td style={thtd}><Badge bg={TIER_COLORS[String(c.risk_tier || "").toUpperCase()] || "#334155"}>{prettyStatus(c.risk_tier)}</Badge></td>
+                      <td style={thtd}>
+                        <Badge
+                          bg={
+                            TIER_COLORS[String(c.risk_tier || "").toUpperCase()] || "#334155"
+                          }
+                        >
+                          {prettyStatus(c.risk_tier)}
+                        </Badge>
+                      </td>
                       <td style={thtd}>{c.risk_score ?? 0}</td>
                       <td style={thtd}>
-                        <button style={smallBtn} onClick={() => onOpenCustomer(c.id)}>Open</button>
+                        <button style={smallBtn} onClick={() => onOpenCustomer(c.id)}>
+                          Open
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -789,7 +1095,15 @@ export default function App() {
       )}
 
       {!loading && tab === "customer-detail" && (
-        <Section title="Customer Detail Page" subtitle="Latest customer on top by default." right={<button style={smallBtn} onClick={() => setTab("contracts")}>Go To Contracts Screen</button>}>
+        <Section
+          title="Customer Detail Page"
+          subtitle="Latest customer on top by default."
+          right={
+            <button style={smallBtn} onClick={() => setTab("contracts")}>
+              Go To Contracts Screen
+            </button>
+          }
+        >
           {!selectedCustomer?.customer ? (
             <EmptyState title="No customer selected" subtitle="Open from Customers tab." />
           ) : (
@@ -798,7 +1112,13 @@ export default function App() {
                 <h3 style={h3Style}>{selectedCustomer.customer.full_name}</h3>
                 <div>{selectedCustomer.customer.email}</div>
                 <div style={{ marginTop: 10 }}>
-                  <Badge bg={TIER_COLORS[String(selectedCustomer.customer.risk_tier || "").toUpperCase()] || "#334155"}>
+                  <Badge
+                    bg={
+                      TIER_COLORS[
+                        String(selectedCustomer.customer.risk_tier || "").toUpperCase()
+                      ] || "#334155"
+                    }
+                  >
                     {prettyStatus(selectedCustomer.customer.risk_tier)}
                   </Badge>
                 </div>
@@ -806,7 +1126,10 @@ export default function App() {
 
               <Section title="Customer Contracts" subtitle="Generated contract list for this customer.">
                 {!selectedCustomer.contracts?.length ? (
-                  <EmptyState title="No contracts" subtitle="No contracts available for this customer." />
+                  <EmptyState
+                    title="No contracts"
+                    subtitle="No contracts available for this customer."
+                  />
                 ) : (
                   <div style={{ overflowX: "auto" }}>
                     <table style={tableStyle}>
@@ -823,7 +1146,12 @@ export default function App() {
                             <td style={thtd}>{c.policy_number}</td>
                             <td style={thtd}>{c.status}</td>
                             <td style={thtd}>
-                              <a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>
+                              <a
+                                href={contractPdfUrl(c.id)}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: "#93c5fd", fontWeight: 700 }}
+                              >
                                 Open PDF
                               </a>
                             </td>
@@ -837,7 +1165,10 @@ export default function App() {
 
               <Section title="Customer Monitoring" subtitle="Monitoring records for this customer.">
                 {!selectedCustomer.monitoring?.length ? (
-                  <EmptyState title="No monitoring" subtitle="No monitoring record available for this customer." />
+                  <EmptyState
+                    title="No monitoring"
+                    subtitle="No monitoring record available for this customer."
+                  />
                 ) : (
                   <div style={{ overflowX: "auto" }}>
                     <table style={tableStyle}>
@@ -853,7 +1184,9 @@ export default function App() {
                           <tr key={m.id}>
                             <td style={thtd}>{m.frequency}</td>
                             <td style={thtd}>{m.status}</td>
-                            <td style={thtd}>{m.next_review_at ? new Date(m.next_review_at).toLocaleString() : "-"}</td>
+                            <td style={thtd}>
+                              {m.next_review_at ? new Date(m.next_review_at).toLocaleString() : "-"}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -867,7 +1200,17 @@ export default function App() {
       )}
 
       {!loading && tab === "contracts" && (
-        <Section title="Contracts Screen" subtitle="Generated contracts list." right={latestContract ? <Badge bg="#dbeafe" color="#1e3a8a">{latestContract.policy_number}</Badge> : null}>
+        <Section
+          title="Contracts Screen"
+          subtitle="Generated contracts list."
+          right={
+            latestContract ? (
+              <Badge bg="#dbeafe" color="#1e3a8a">
+                {latestContract.policy_number}
+              </Badge>
+            ) : null
+          }
+        >
           {!contracts.length ? (
             <EmptyState title="No contracts yet" subtitle="Low-risk path creates contracts." />
           ) : (
@@ -889,12 +1232,19 @@ export default function App() {
                       <td style={thtd}>{c.full_name}</td>
                       <td style={thtd}>{c.email}</td>
                       <td style={thtd}>
-                        <a href={contractPdfUrl(c.id)} target="_blank" rel="noreferrer" style={{ color: "#93c5fd", fontWeight: 700 }}>
+                        <a
+                          href={contractPdfUrl(c.id)}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: "#93c5fd", fontWeight: 700 }}
+                        >
                           Open PDF
                         </a>
                       </td>
                       <td style={thtd}>
-                        <button style={smallBtn} onClick={() => onRegenerateContract(c.id)}>Regenerate</button>
+                        <button style={smallBtn} onClick={() => onRegenerateContract(c.id)}>
+                          Regenerate
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -906,7 +1256,10 @@ export default function App() {
       )}
 
       {!loading && tab === "applications" && (
-        <Section title="Applications" subtitle="Manage application status, start KYC, and override risk tier manually.">
+        <Section
+          title="Applications"
+          subtitle="Manage application status, start KYC, and override risk tier manually."
+        >
           {!applications.length ? (
             <EmptyState title="No applications found" subtitle="Create from Workflow tab." />
           ) : (
@@ -932,15 +1285,27 @@ export default function App() {
                     <tr key={a.id}>
                       <td style={thtd}>{a.full_name}</td>
                       <td style={thtd}>{a.email}</td>
-                      <td style={thtd}><Badge bg={STATUS_COLORS[a.kyc_status] || "#475569"}>{prettyStatus(a.kyc_status)}</Badge></td>
-                      <td style={thtd}><Badge bg={TIER_COLORS[a.risk_tier] || "#334155"}>{prettyStatus(a.risk_tier)}</Badge></td>
+                      <td style={thtd}>
+                        <Badge bg={STATUS_COLORS[a.kyc_status] || "#475569"}>
+                          {prettyStatus(a.kyc_status)}
+                        </Badge>
+                      </td>
+                      <td style={thtd}>
+                        <Badge bg={TIER_COLORS[a.risk_tier] || "#334155"}>
+                          {prettyStatus(a.risk_tier)}
+                        </Badge>
+                      </td>
                       <td style={thtd}>{a.risk_score ?? 0}</td>
                       <td style={thtd}>{prettyStatus(a.decision_status)}</td>
                       <td style={thtd}>{prettyStatus(a.compliance_status)}</td>
                       <td style={thtd}>{prettyStatus(a.policy_status)}</td>
                       <td style={thtd}>{a.monitoring_frequency || "-"}</td>
                       <td style={thtd}>
-                        <select defaultValue="" style={{ ...inputStyle, minWidth: 130 }} onChange={(e) => e.target.value && onOverrideTier(a.id, e.target.value)}>
+                        <select
+                          defaultValue=""
+                          style={{ ...inputStyle, minWidth: 130 }}
+                          onChange={(e) => e.target.value && onOverrideTier(a.id, e.target.value)}
+                        >
                           <option value="">Select</option>
                           <option value="LOW">LOW</option>
                           <option value="MEDIUM">MEDIUM</option>
@@ -949,7 +1314,9 @@ export default function App() {
                         </select>
                       </td>
                       <td style={thtd}>
-                        <button style={secondaryBtn} onClick={() => onStartKyc(a)} disabled={busy}>Start Sumsub</button>
+                        <button style={secondaryBtn} onClick={() => onStartKyc(a)} disabled={busy}>
+                          Start Sumsub
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -1005,24 +1372,113 @@ export default function App() {
   );
 }
 
-function MetricCard({ label, value }) {
-  return (
-    <div style={{ background: "#122041", borderRadius: 16, padding: 18, minWidth: 180 }}>
-      <div style={{ opacity: 0.8, marginBottom: 10, fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 34, fontWeight: 900 }}>{value}</div>
-    </div>
-  );
-}
+const panelStyle = {
+  background: "#0f1b39",
+  borderRadius: 16,
+  padding: 18,
+};
 
-const panelStyle = { background: "#0f1b39", borderRadius: 16, padding: 18 };
-const h3Style = { marginTop: 0, marginBottom: 12 };
-const inputStyle = { width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "#0b1631", color: "#fff", outline: "none" };
-const primaryBtn = { border: "none", borderRadius: 12, background: "#7c5cff", color: "#fff", padding: "12px 16px", fontWeight: 800, cursor: "pointer" };
-const secondaryBtn = { border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, background: "#192857", color: "#fff", padding: "10px 12px", fontWeight: 700, cursor: "pointer" };
-const smallBtn = { border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, background: "#243a72", color: "#fff", padding: "8px 10px", fontWeight: 700, cursor: "pointer" };
-const tableStyle = { width: "100%", borderCollapse: "collapse", color: "#fff", background: "#24355f", borderRadius: 14, overflow: "hidden" };
-const thtd = { padding: "14px 12px", textAlign: "left", borderBottom: "1px solid rgba(255,255,255,0.08)" };
-const modalBackdrop = { position: "fixed", inset: 0, background: "rgba(2, 8, 23, 0.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 9999 };
-const modalCard = { width: "min(1100px, 96vw)", height: "min(900px, 92vh)", background: "#0f172a", borderRadius: 18, boxShadow: "0 30px 100px rgba(0,0,0,0.45)", display: "flex", flexDirection: "column", overflow: "hidden" };
-const modalHeader = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "18px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#111c39", color: "#fff" };
-const closeBtn = { border: "none", background: "#22325d", color: "#fff", width: 40, height: 40, borderRadius: 10, cursor: "pointer", fontSize: 18, fontWeight: 800 };
+const h3Style = {
+  marginTop: 0,
+  marginBottom: 12,
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "12px 14px",
+  borderRadius: 12,
+  border: "1px solid rgba(255,255,255,0.12)",
+  background: "#0b1631",
+  color: "#fff",
+  outline: "none",
+};
+
+const primaryBtn = {
+  border: "none",
+  borderRadius: 12,
+  background: "#7c5cff",
+  color: "#fff",
+  padding: "12px 16px",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const secondaryBtn = {
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 10,
+  background: "#192857",
+  color: "#fff",
+  padding: "10px 12px",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const smallBtn = {
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 8,
+  background: "#243a72",
+  color: "#fff",
+  padding: "8px 10px",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const tableStyle = {
+  width: "100%",
+  borderCollapse: "collapse",
+  color: "#fff",
+  background: "#24355f",
+  borderRadius: 14,
+  overflow: "hidden",
+};
+
+const thtd = {
+  padding: "14px 12px",
+  textAlign: "left",
+  borderBottom: "1px solid rgba(255,255,255,0.08)",
+};
+
+const modalBackdrop = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(2, 8, 23, 0.72)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 20,
+  zIndex: 9999,
+};
+
+const modalCard = {
+  width: "min(1100px, 96vw)",
+  height: "min(900px, 92vh)",
+  background: "#0f172a",
+  borderRadius: 18,
+  boxShadow: "0 30px 100px rgba(0,0,0,0.45)",
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+};
+
+const modalHeader = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  padding: "18px 20px",
+  borderBottom: "1px solid rgba(255,255,255,0.08)",
+  background: "#111c39",
+  color: "#fff",
+};
+
+const closeBtn = {
+  border: "none",
+  background: "#22325d",
+  color: "#fff",
+  width: 40,
+  height: 40,
+  borderRadius: 10,
+  cursor: "pointer",
+  fontSize: 18,
+  fontWeight: 800,
+};

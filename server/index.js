@@ -46,10 +46,12 @@ async function safeQuery(sql, params = []) {
 
 function normalizeVerificationStatus(input) {
   const value = String(input || "").trim().toUpperCase();
+
   if (["APPROVED", "REJECTED", "PENDING", "REVIEW"].includes(value)) return value;
   if (["GREEN", "COMPLETED"].includes(value)) return "APPROVED";
   if (["RED", "FAILED"].includes(value)) return "REJECTED";
   if (["ON_HOLD", "ONHOLD"].includes(value)) return "REVIEW";
+
   return "PENDING";
 }
 
@@ -79,6 +81,7 @@ function extractVerificationStatus(payload = {}) {
   if (type === "applicantReviewed" || type === "applicantWorkflowCompleted") {
     return normalizeVerificationStatus(payload.reviewResult?.reviewAnswer || "PENDING");
   }
+
   return "PENDING";
 }
 
@@ -115,9 +118,7 @@ function buildSignalPayload(payload = {}) {
       Boolean(payload.highRiskCountry) ||
       hasLabel("COUNTRY") ||
       hasLabel("HIGH_RISK_COUNTRY"),
-    deviceRisk:
-      Boolean(payload.deviceRisk) ||
-      hasLabel("DEVICE"),
+    deviceRisk: Boolean(payload.deviceRisk) || hasLabel("DEVICE"),
     ipMismatch:
       Boolean(payload.ipMismatch) ||
       Boolean(payload.deviceOrIpMismatch) ||
@@ -147,10 +148,13 @@ function deriveStrictVerification(payload = {}, baseStatus) {
     "BAD_QUALITY",
   ];
 
-  const hasHardReject = labels.some((l) => hardRejectKeywords.some((k) => l.includes(k)));
+  const hasHardReject = labels.some((l) =>
+    hardRejectKeywords.some((k) => l.includes(k))
+  );
 
   if (hasHardReject || rejectType === "FINAL") return "REJECTED";
   if (String(baseStatus).toUpperCase() === "APPROVED" && labels.length > 0) return "REVIEW";
+
   return baseStatus;
 }
 
@@ -193,7 +197,10 @@ async function ensureCustomer(application, applicantId, riskTier, score) {
       `UPDATE customers SET risk_tier = $2, risk_score = $3 WHERE id = $1 RETURNING *`,
       [existingCustomer.rows[0].id, riskTier, score]
     );
-    await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [application.id, updated.rows[0].id]);
+    await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [
+      application.id,
+      updated.rows[0].id,
+    ]);
     return updated.rows[0];
   }
 
@@ -206,18 +213,31 @@ async function ensureCustomer(application, applicantId, riskTier, score) {
     [applicantId, application.full_name, application.email, riskTier, score]
   );
 
-  await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [application.id, customerRes.rows[0].id]);
+  await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [
+    application.id,
+    customerRes.rows[0].id,
+  ]);
+
   return customerRes.rows[0];
 }
 
-async function ensureContract(application, customer, applicantId, verificationStatus, monitoringFrequency) {
+async function ensureContract(
+  application,
+  customer,
+  applicantId,
+  verificationStatus,
+  monitoringFrequency
+) {
   const existingContract = await safeQuery(
     `SELECT * FROM contracts WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
     [customer.id]
   );
 
   if (existingContract.rows.length) {
-    await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [application.id, existingContract.rows[0].id]);
+    await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [
+      application.id,
+      existingContract.rows[0].id,
+    ]);
     return existingContract.rows[0];
   }
 
@@ -270,7 +290,11 @@ async function ensureContract(application, customer, applicantId, verificationSt
     ]
   );
 
-  await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [application.id, contractRes.rows[0].id]);
+  await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [
+    application.id,
+    contractRes.rows[0].id,
+  ]);
+
   return contractRes.rows[0];
 }
 
@@ -289,16 +313,22 @@ async function upsertMonitoring(customerId, frequency) {
 
   if (existing.rows.length) {
     const updated = await safeQuery(
-      `UPDATE monitoring SET frequency = $2, status = 'ACTIVE', next_review_at = NOW() + ($3)::interval WHERE id = $1 RETURNING *`,
+      `UPDATE monitoring
+       SET frequency = $2, status = 'ACTIVE', next_review_at = NOW() + ($3)::interval
+       WHERE id = $1
+       RETURNING *`,
       [existing.rows[0].id, frequency, interval]
     );
     return updated.rows[0];
   }
 
   const inserted = await safeQuery(
-    `INSERT INTO monitoring (customer_id, frequency, status, next_review_at) VALUES ($1, $2, 'ACTIVE', NOW() + ($3)::interval) RETURNING *`,
+    `INSERT INTO monitoring (customer_id, frequency, status, next_review_at)
+     VALUES ($1, $2, 'ACTIVE', NOW() + ($3)::interval)
+     RETURNING *`,
     [customerId, frequency, interval]
   );
+
   return inserted.rows[0];
 }
 
@@ -308,7 +338,10 @@ async function createComplianceReview(applicationId, applicantId, score, riskTie
     [applicationId]
   );
 
-  if (existing.rows.length && ["PENDING_REVIEW", "IN_PROGRESS"].includes(existing.rows[0].status)) {
+  if (
+    existing.rows.length &&
+    ["PENDING_REVIEW", "IN_PROGRESS"].includes(existing.rows[0].status)
+  ) {
     return existing.rows[0];
   }
 
@@ -448,8 +481,11 @@ app.post("/api/applications/:id/risk-tier", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const overrideTier = normalizeTier(req.body?.riskTier);
+
     if (!overrideTier) {
-      return res.status(400).json({ ok: false, error: "riskTier must be one of LOW, MEDIUM, HIGH, CRITICAL" });
+      return res
+        .status(400)
+        .json({ ok: false, error: "riskTier must be one of LOW, MEDIUM, HIGH, CRITICAL" });
     }
 
     const updated = await safeQuery(
@@ -481,6 +517,7 @@ app.post("/api/applications/:id/send-to-compliance", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const appRes = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [id]);
+
     if (!appRes.rows.length) {
       return res.status(404).json({ ok: false, error: "Application not found" });
     }
@@ -528,6 +565,7 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const existing = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [id]);
+
     if (!existing.rows.length) {
       return res.status(404).json({ ok: false, error: "Application not found" });
     }
@@ -611,6 +649,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
 
     const payload = req.body || {};
     const applicantId = extractApplicantId(payload);
+
     if (!applicantId) {
       return res.status(400).json({ ok: false, error: "applicantId is required" });
     }
@@ -645,6 +684,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       `SELECT * FROM applications WHERE external_applicant_id = $1 ORDER BY id DESC LIMIT 1`,
       [applicantId]
     );
+
     if (!appRes.rows.length) {
       return res.status(404).json({ ok: false, error: "Application not found for applicantId" });
     }
@@ -669,7 +709,13 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         monitoringFrequency = "12_MONTHS";
 
         customer = await ensureCustomer(application, applicantId, riskTier, score);
-        contract = await ensureContract(application, customer, applicantId, verificationStatus, monitoringFrequency);
+        contract = await ensureContract(
+          application,
+          customer,
+          applicantId,
+          verificationStatus,
+          monitoringFrequency
+        );
         monitoringRecord = await upsertMonitoring(customer.id, monitoringFrequency);
       } else if (riskTier === "MEDIUM") {
         decisionStatus = "STANDARD_MONITORING";
@@ -765,10 +811,17 @@ app.post("/api/webhook/sumsub", async (req, res) => {
     );
 
     if (customer) {
-      await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [application.id, customer.id]);
+      await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [
+        application.id,
+        customer.id,
+      ]);
     }
+
     if (contract) {
-      await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [application.id, contract.id]);
+      await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [
+        application.id,
+        contract.id,
+      ]);
     }
 
     await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
@@ -814,10 +867,18 @@ app.get("/api/customers", async (req, res) => {
 app.get("/api/customers/:id", async (req, res) => {
   try {
     const customerRes = await safeQuery(`SELECT * FROM customers WHERE id = $1`, [req.params.id]);
-    if (!customerRes.rows.length) return res.status(404).json({ ok: false, error: "Customer not found" });
+    if (!customerRes.rows.length) {
+      return res.status(404).json({ ok: false, error: "Customer not found" });
+    }
 
-    const contracts = await safeQuery(`SELECT * FROM contracts WHERE customer_id = $1 ORDER BY created_at DESC`, [req.params.id]);
-    const monitoring = await safeQuery(`SELECT * FROM monitoring WHERE customer_id = $1 ORDER BY created_at DESC`, [req.params.id]);
+    const contracts = await safeQuery(
+      `SELECT * FROM contracts WHERE customer_id = $1 ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    const monitoring = await safeQuery(
+      `SELECT * FROM monitoring WHERE customer_id = $1 ORDER BY created_at DESC`,
+      [req.params.id]
+    );
 
     res.json({
       ok: true,
@@ -908,8 +969,14 @@ app.put("/api/contracts/:id", async (req, res) => {
 
 app.post("/api/contracts/:id/regenerate", async (req, res) => {
   try {
-    const result = await safeQuery(`UPDATE contracts SET created_at = NOW() WHERE id = $1 RETURNING *`, [req.params.id]);
-    if (!result.rows.length) return res.status(404).json({ ok: false, error: "Contract not found" });
+    const result = await safeQuery(
+      `UPDATE contracts SET created_at = NOW() WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ ok: false, error: "Contract not found" });
+    }
 
     await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
       "CONTRACT_REGENERATED",
@@ -935,14 +1002,20 @@ app.post("/api/compliance-reviews/:id/action", async (req, res) => {
   try {
     const action = String(req.body?.action || "").toUpperCase();
     const allowed = ["APPROVE", "REJECT", "DONE", "ESCALATE", "START"];
+
     if (!allowed.includes(action)) {
       return res.status(400).json({ ok: false, error: "Invalid action" });
     }
 
-    const reviewRes = await safeQuery(`SELECT * FROM compliance_reviews WHERE id = $1`, [req.params.id]);
-    if (!reviewRes.rows.length) return res.status(404).json({ ok: false, error: "Review not found" });
-    const review = reviewRes.rows[0];
+    const reviewRes = await safeQuery(`SELECT * FROM compliance_reviews WHERE id = $1`, [
+      req.params.id,
+    ]);
 
+    if (!reviewRes.rows.length) {
+      return res.status(404).json({ ok: false, error: "Review not found" });
+    }
+
+    const review = reviewRes.rows[0];
     let reviewStatus = review.status;
     let appCompliance = null;
     let appPolicy = null;
@@ -972,7 +1045,11 @@ app.post("/api/compliance-reviews/:id/action", async (req, res) => {
 
     if (appCompliance || appPolicy) {
       await safeQuery(
-        `UPDATE applications SET compliance_status = COALESCE($2, compliance_status), policy_status = COALESCE($3, policy_status), updated_at = NOW() WHERE id = $1`,
+        `UPDATE applications
+         SET compliance_status = COALESCE($2, compliance_status),
+             policy_status = COALESCE($3, policy_status),
+             updated_at = NOW()
+         WHERE id = $1`,
         [review.application_id, appCompliance, appPolicy]
       );
     }
@@ -993,19 +1070,23 @@ app.get("/api/verified-results", async (req, res) => {
     const successfulOnly = String(req.query.successfulOnly || "").toLowerCase() === "true";
 
     const result = successfulOnly
-      ? await safeQuery(`
+      ? await safeQuery(
+          `
           SELECT *
           FROM applications
           WHERE kyc_status = 'APPROVED'
           ORDER BY updated_at DESC NULLS LAST, id DESC
-        `)
-      : await safeQuery(`
+          `
+        )
+      : await safeQuery(
+          `
           SELECT *
           FROM applications
           WHERE kyc_status IN ('APPROVED', 'REJECTED', 'PENDING', 'REVIEW')
              OR decision_status IN ('AUTO_APPROVED', 'STANDARD_MONITORING', 'MANUAL_REVIEW', 'REJECT_ESCALATE')
           ORDER BY updated_at DESC NULLS LAST, id DESC
-        `);
+          `
+        );
 
     res.json({ ok: true, results: result.rows || [] });
   } catch (e) {
@@ -1031,7 +1112,10 @@ app.post("/api/monitoring/:id/action", async (req, res) => {
   try {
     const action = String(req.body?.action || "").toUpperCase();
     const allowed = ["COMPLETE", "SNOOZE"];
-    if (!allowed.includes(action)) return res.status(400).json({ ok: false, error: "Invalid action" });
+
+    if (!allowed.includes(action)) {
+      return res.status(400).json({ ok: false, error: "Invalid action" });
+    }
 
     const sql =
       action === "COMPLETE"
@@ -1039,7 +1123,10 @@ app.post("/api/monitoring/:id/action", async (req, res) => {
         : `UPDATE monitoring SET status = 'SNOOZED', next_review_at = NOW() + INTERVAL '30 days' WHERE id = $1 RETURNING *`;
 
     const updated = await safeQuery(sql, [req.params.id]);
-    if (!updated.rows.length) return res.status(404).json({ ok: false, error: "Monitoring record not found" });
+
+    if (!updated.rows.length) {
+      return res.status(404).json({ ok: false, error: "Monitoring record not found" });
+    }
 
     await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
       "MONITORING_ACTION",
@@ -1064,17 +1151,23 @@ app.get("/api/audits", async (req, res) => {
 app.get("/api/contracts/:id/pdf", async (req, res) => {
   try {
     const contractRes = await safeQuery(`SELECT * FROM contracts WHERE id = $1`, [req.params.id]);
+
     if (!contractRes.rows.length) {
       return res.status(404).json({ ok: false, error: "Contract not found" });
     }
 
     const contract = contractRes.rows[0];
-    const customerRes = await safeQuery(`SELECT * FROM customers WHERE id = $1`, [contract.customer_id]);
+    const customerRes = await safeQuery(`SELECT * FROM customers WHERE id = $1`, [
+      contract.customer_id,
+    ]);
     const customer = customerRes.rows[0] || {};
 
     let application = {};
     if (customer?.id) {
-      const appRes = await safeQuery(`SELECT * FROM applications WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`, [customer.id]);
+      const appRes = await safeQuery(
+        `SELECT * FROM applications WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
+        [customer.id]
+      );
       application = appRes.rows[0] || {};
     }
 
@@ -1093,6 +1186,7 @@ app.get("/api/audit/export", async (req, res) => {
   try {
     const logs = await safeQuery(`SELECT * FROM audit_logs ORDER BY created_at DESC`);
     const csv = stringify(logs.rows || [], { header: true });
+
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=audit_export.csv");
     res.send(csv);

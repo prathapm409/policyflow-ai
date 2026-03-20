@@ -16,6 +16,7 @@ import {
   actOnComplianceReview,
   regenerateContract,
   getCustomer,
+  sendToComplianceReview,
 } from "./api";
 
 const STATUS_COLORS = {
@@ -36,6 +37,7 @@ const STATUS_COLORS = {
   NOT_STARTED: "#475569",
   ESCALATED: "#dc2626",
   REJECTED_STATUS: "#dc2626",
+  APPROVED_STATUS: "#16a34a",
 };
 
 const TIER_COLORS = {
@@ -104,7 +106,7 @@ function calcRisk(signals) {
 
   let tier = "LOW";
   let action = "Auto approve";
-  if (score >= 80) {
+  if (score >= 81) {
     tier = "CRITICAL";
     action = "Reject / escalate";
   } else if (score >= 51) {
@@ -123,28 +125,34 @@ function getProcessSteps(riskTier) {
 
   if (tier === "LOW") {
     return [
+      "Successful KYC verified",
+      "Auto risk score calculated",
       "Create customer",
-      "Generate policy",
+      "Generate policy contract",
       "Create monitoring every 12 months",
-      "Go to customer page",
+      "Open customer page",
       "Open contracts screen",
     ];
   }
 
   if (tier === "MEDIUM") {
     return [
+      "Successful KYC verified",
+      "Auto risk score calculated",
       "Create customer",
       "Create monitoring every 6 months",
       "Send to compliance review",
-      "Go to compliance review to-do page",
+      "Open compliance review queue",
     ];
   }
 
   if (tier === "HIGH" || tier === "CRITICAL") {
     return [
+      "Verification outcome received",
+      "High/critical risk assigned automatically",
       "Send to compliance review",
       "Hold policy issuance",
-      "Go to compliance review to-do page",
+      "Open compliance review queue",
     ];
   }
 
@@ -226,8 +234,8 @@ function ProcessFlowCard({ result }) {
 
   return (
     <Section
-      title="Process Result"
-      subtitle={`Exact process shown for ${result.riskTier} risk tier.`}
+      title="Automated Process Result"
+      subtitle={`Internal workflow path for ${result.riskTier} risk tier.`}
       right={<Badge bg={TIER_COLORS[result.riskTier] || "#334155"}>{result.riskTier}</Badge>}
     >
       <div style={{ display: "grid", gap: 12 }}>
@@ -265,7 +273,7 @@ function ProcessFlowCard({ result }) {
 
       {result?.amlReasons?.length ? (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>AML / Risk source traceability</div>
+          <div style={{ fontWeight: 800, marginBottom: 8 }}>Risk reason traceability</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {result.amlReasons.map((r) => (
               <Badge key={r} bg="#334155">
@@ -338,6 +346,8 @@ export default function App() {
 
   const [form, setForm] = useState({ fullName: "", email: "" });
   const [selectedId, setSelectedId] = useState(null);
+  const [successfulOnly, setSuccessfulOnly] = useState(true);
+
   const [signals, setSignals] = useState({
     pepMatch: false,
     sanctionsMatch: false,
@@ -354,7 +364,7 @@ export default function App() {
   const [kycModalOpen, setKycModalOpen] = useState(false);
   const [kycTitle, setKycTitle] = useState("Sumsub Verification");
 
-  async function loadAll() {
+  async function loadAll(successOnly = successfulOnly) {
     setLoading(true);
     setError("");
     try {
@@ -372,7 +382,7 @@ export default function App() {
         listContracts(),
         listCustomers(),
         listComplianceReviews(),
-        listVerifiedResults(),
+        listVerifiedResults(successOnly),
         listMonitoring(),
       ]);
 
@@ -397,8 +407,8 @@ export default function App() {
   }
 
   useEffect(() => {
-    loadAll();
-  }, []);
+    loadAll(successfulOnly);
+  }, [successfulOnly]);
 
   useEffect(() => {
     if (!selectedId && applications.length) setSelectedId(applications[0].id);
@@ -429,6 +439,7 @@ export default function App() {
       setTab("customer-detail");
       return true;
     }
+
     setTab("customers");
     return false;
   }
@@ -446,7 +457,7 @@ export default function App() {
       }
       setInfo("Application created successfully.");
       setForm({ fullName: "", email: "" });
-      await loadAll();
+      await loadAll(successfulOnly);
       setTab("applications");
     } catch (e) {
       console.error(e);
@@ -485,7 +496,7 @@ export default function App() {
             .withConf({ lang: "en" })
             .withOptions({ addViewportTag: false, adaptIframeHeight: true })
             .on("idCheck.onApplicantStatusChanged", async () => {
-              await loadAll();
+              await loadAll(successfulOnly);
             })
             .build()
             .launch("#sumsub-websdk-container");
@@ -516,10 +527,31 @@ export default function App() {
         return;
       }
       setInfo(`Risk tier updated to ${riskTier}.`);
-      await loadAll();
+      await loadAll(successfulOnly);
     } catch (e) {
       console.error(e);
       setError("Risk tier override failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSendToCompliance(applicationId) {
+    setBusy(true);
+    setError("");
+    setInfo("");
+    try {
+      const res = await sendToComplianceReview(applicationId);
+      if (!res?.ok) {
+        setError(res?.error || "Failed to send to compliance");
+        return;
+      }
+      setInfo("Application sent to compliance review.");
+      await loadAll(successfulOnly);
+      setTab("reviews");
+    } catch (e) {
+      console.error(e);
+      setError("Failed to send to compliance");
     } finally {
       setBusy(false);
     }
@@ -552,22 +584,22 @@ export default function App() {
         amlReasons,
       });
 
-      await loadAll();
+      await loadAll(successfulOnly);
 
       if (finalTier === "LOW") {
-        setInfo("LOW flow: opening customer page...");
+        setInfo("LOW flow completed: opening customer page...");
         const opened = await openLatestCustomerDetail(res?.customer?.id || null);
         if (opened) {
           setTimeout(() => {
-            setInfo("LOW flow: opening contracts screen...");
+            setInfo("LOW flow completed: opening contracts screen...");
             setTab("contracts");
-          }, 1500);
+          }, 1200);
         }
       } else if (finalTier === "MEDIUM") {
-        setInfo("MEDIUM flow: opening compliance review to-do page...");
+        setInfo("MEDIUM flow completed: opening compliance review queue...");
         setTab("reviews");
       } else if (finalTier === "HIGH" || finalTier === "CRITICAL") {
-        setInfo(`${finalTier} flow: opening compliance review to-do page...`);
+        setInfo(`${finalTier} flow completed: opening compliance review queue...`);
         setTab("reviews");
       } else {
         setTab("workflow");
@@ -598,7 +630,7 @@ export default function App() {
         return;
       }
       setInfo(`Compliance review ${action.toLowerCase()} completed.`);
-      await loadAll();
+      await loadAll(successfulOnly);
       setTab("reviews");
     } catch (e) {
       console.error(e);
@@ -619,7 +651,7 @@ export default function App() {
         return;
       }
       setInfo(`Monitoring ${action.toLowerCase()} completed.`);
-      await loadAll();
+      await loadAll(successfulOnly);
       setTab("monitoring");
     } catch (e) {
       console.error(e);
@@ -639,8 +671,8 @@ export default function App() {
         setError(res?.error || "Failed to regenerate contract");
         return;
       }
-      setInfo("Contract regenerated.");
-      await loadAll();
+      setInfo("Contract regenerated. Opening contract screen for editing/review.");
+      await loadAll(successfulOnly);
       setTab("contracts");
     } catch (e) {
       console.error(e);
@@ -756,9 +788,9 @@ export default function App() {
         <>
           <Section
             title="KYC Workflow"
-            subtitle="Create an application, launch Sumsub, review risk signals, and simulate verification outcomes."
+            subtitle="Internal operations flow: create application, launch Sumsub, receive verified result, auto-score risk, and route to contracts or compliance."
           >
-            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 18 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 18 }}>
               <div style={panelStyle}>
                 <h3 style={h3Style}>Create application</h3>
                 <form onSubmit={onCreateApplication} style={{ display: "grid", gap: 12 }}>
@@ -781,7 +813,7 @@ export default function App() {
               </div>
 
               <div style={panelStyle}>
-                <h3 style={h3Style}>Risk signals and verification</h3>
+                <h3 style={h3Style}>Verification and automated risk flow</h3>
 
                 <select
                   value={selectedId || ""}
@@ -797,7 +829,10 @@ export default function App() {
                 </select>
 
                 <div style={{ marginTop: 14 }}>
-                  <div style={{ fontWeight: 800, marginBottom: 10 }}>Select risk labels / flags</div>
+                  <div style={{ fontWeight: 800, marginBottom: 10 }}>Testing risk signals</div>
+                  <div style={{ fontSize: 13, opacity: 0.78, marginBottom: 10 }}>
+                    These manual flags are only for POC/testing when sandbox results are limited.
+                  </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {SIGNAL_OPTIONS.map((s) => (
                       <button
@@ -836,14 +871,14 @@ export default function App() {
                 </div>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
-                  <Badge bg="#0f172a">Risk score: {riskPreview.score}</Badge>
+                  <Badge bg="#0f172a">Auto risk score: {riskPreview.score}</Badge>
                   <Badge bg={TIER_COLORS[riskPreview.tier]}>{riskPreview.tier}</Badge>
                   <Badge bg="#334155">{riskPreview.action}</Badge>
                 </div>
 
                 {riskPreview.sourceReasons.length ? (
                   <div style={{ marginTop: 12 }}>
-                    <div style={{ fontWeight: 800, marginBottom: 8 }}>Risk source traceability</div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>Risk reasons</div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {riskPreview.sourceReasons.map((r) => (
                         <Badge key={r} bg="#334155">
@@ -868,7 +903,7 @@ export default function App() {
                     disabled={busy || !selectedApplication}
                     onClick={onSimulateVerification}
                   >
-                    Apply Verification Result
+                    Apply Verified Result
                   </button>
                 </div>
               </div>
@@ -880,11 +915,30 @@ export default function App() {
       )}
 
       {!loading && tab === "verified" && (
-        <Section title="Verified Results" subtitle="Verification results list.">
+        <Section
+          title="Verified Results"
+          subtitle="Internal analyst view of verified Sumsub outcomes, final risk score, risk reasons, and next-step decisions."
+          right={
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                style={successfulOnly ? primaryBtn : secondaryBtn}
+                onClick={() => setSuccessfulOnly(true)}
+              >
+                Successful KYC only
+              </button>
+              <button
+                style={!successfulOnly ? primaryBtn : secondaryBtn}
+                onClick={() => setSuccessfulOnly(false)}
+              >
+                Show all
+              </button>
+            </div>
+          }
+        >
           {!verifiedResults.length ? (
             <EmptyState
               title="No verified results yet"
-              subtitle="Use Workflow tab and Apply Verification Result."
+              subtitle="Create an application, start KYC, and apply a verification result from the Workflow tab."
             />
           ) : (
             <div style={{ overflowX: "auto" }}>
@@ -893,31 +947,52 @@ export default function App() {
                   <tr>
                     <th style={thtd}>Name</th>
                     <th style={thtd}>Email</th>
-                    <th style={thtd}>KYC</th>
+                    <th style={thtd}>Verification Status</th>
                     <th style={thtd}>Risk Score</th>
                     <th style={thtd}>Risk Tier</th>
                     <th style={thtd}>Decision</th>
+                    <th style={thtd}>Compliance</th>
+                    <th style={thtd}>Policy</th>
+                    <th style={thtd}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {verifiedResults.map((r) => (
-                    <tr key={r.id}>
-                      <td style={thtd}>{r.full_name}</td>
-                      <td style={thtd}>{r.email}</td>
-                      <td style={thtd}>
-                        <Badge bg={STATUS_COLORS[r.kyc_status] || "#475569"}>
-                          {prettyStatus(r.kyc_status)}
-                        </Badge>
-                      </td>
-                      <td style={thtd}>{r.risk_score ?? 0}</td>
-                      <td style={thtd}>
-                        <Badge bg={TIER_COLORS[r.risk_tier] || "#334155"}>
-                          {prettyStatus(r.risk_tier)}
-                        </Badge>
-                      </td>
-                      <td style={thtd}>{prettyStatus(r.decision_status)}</td>
-                    </tr>
-                  ))}
+                  {verifiedResults.map((r) => {
+                    const highRisk = ["HIGH", "CRITICAL"].includes(String(r.risk_tier || "").toUpperCase());
+                    return (
+                      <tr key={r.id}>
+                        <td style={thtd}>{r.full_name}</td>
+                        <td style={thtd}>{r.email}</td>
+                        <td style={thtd}>
+                          <Badge bg={STATUS_COLORS[r.kyc_status] || "#475569"}>
+                            {prettyStatus(r.kyc_status)}
+                          </Badge>
+                        </td>
+                        <td style={thtd}>{r.risk_score ?? 0}</td>
+                        <td style={thtd}>
+                          <Badge bg={TIER_COLORS[r.risk_tier] || "#334155"}>
+                            {prettyStatus(r.risk_tier)}
+                          </Badge>
+                        </td>
+                        <td style={thtd}>{prettyStatus(r.decision_status)}</td>
+                        <td style={thtd}>{prettyStatus(r.compliance_status)}</td>
+                        <td style={thtd}>{prettyStatus(r.policy_status)}</td>
+                        <td style={thtd}>
+                          {highRisk ? (
+                            <button
+                              style={smallBtn}
+                              disabled={busy}
+                              onClick={() => onSendToCompliance(r.id)}
+                            >
+                              Send to Compliance
+                            </button>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -927,13 +1002,13 @@ export default function App() {
 
       {!loading && tab === "reviews" && (
         <Section
-          title="Compliance Review To-Do Page"
-          subtitle="Medium, high and critical review queue."
+          title="Compliance Review Queue"
+          subtitle="Medium, high, and critical risk cases routed for analyst/compliance handling."
         >
           {!reviews.length ? (
             <EmptyState
               title="No compliance review items"
-              subtitle="Use medium/high/critical process in Workflow tab."
+              subtitle="High-risk or routed cases will appear here."
             />
           ) : (
             <div style={{ overflowX: "auto" }}>
@@ -958,7 +1033,11 @@ export default function App() {
                           {prettyStatus(r.risk_tier)}
                         </Badge>
                       </td>
-                      <td style={thtd}>{r.status}</td>
+                      <td style={thtd}>
+                        <Badge bg={STATUS_COLORS[r.status] || "#475569"}>
+                          {prettyStatus(r.status)}
+                        </Badge>
+                      </td>
                       <td style={thtd}>{r.reason}</td>
                       <td style={thtd}>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -970,6 +1049,9 @@ export default function App() {
                           </button>
                           <button style={smallBtn} onClick={() => onReviewAction(r.id, "DONE")}>
                             Done
+                          </button>
+                          <button style={smallBtn} onClick={() => onReviewAction(r.id, "ESCALATE")}>
+                            Escalate
                           </button>
                         </div>
                       </td>
@@ -983,11 +1065,14 @@ export default function App() {
       )}
 
       {!loading && tab === "monitoring" && (
-        <Section title="Monitoring" subtitle="Monitoring queue.">
+        <Section
+          title="Monitoring"
+          subtitle="Monitoring records created automatically for approved low/medium-risk customers."
+        >
           {!monitoring.length ? (
             <EmptyState
               title="No monitoring items yet"
-              subtitle="Monitoring records will appear here when created."
+              subtitle="Monitoring records will appear for low and medium risk flows."
             />
           ) : (
             <div style={{ overflowX: "auto" }}>
@@ -1010,16 +1095,16 @@ export default function App() {
                       <td style={thtd}>{m.email}</td>
                       <td style={thtd}>
                         <Badge
-                          bg={
-                            TIER_COLORS[String(m.risk_tier || "").toUpperCase()] || "#334155"
-                          }
+                          bg={TIER_COLORS[String(m.risk_tier || "").toUpperCase()] || "#334155"}
                         >
                           {prettyStatus(m.risk_tier)}
                         </Badge>
                       </td>
                       <td style={thtd}>{m.frequency}</td>
                       <td style={thtd}>
-                        <Badge bg={STATUS_COLORS[m.status] || "#475569"}>{m.status}</Badge>
+                        <Badge bg={STATUS_COLORS[m.status] || "#475569"}>
+                          {prettyStatus(m.status)}
+                        </Badge>
                       </td>
                       <td style={thtd}>
                         {m.next_review_at ? new Date(m.next_review_at).toLocaleString() : "-"}
@@ -1050,9 +1135,12 @@ export default function App() {
       )}
 
       {!loading && tab === "customers" && (
-        <Section title="Customers" subtitle="Created customers.">
+        <Section
+          title="Customers"
+          subtitle="Internal customer records created after approved KYC and downstream processing."
+        >
           {!customers.length ? (
-            <EmptyState title="No customers yet" subtitle="Create using low or medium flow." />
+            <EmptyState title="No customers yet" subtitle="Create from the workflow." />
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={tableStyle}>
@@ -1072,9 +1160,7 @@ export default function App() {
                       <td style={thtd}>{c.email}</td>
                       <td style={thtd}>
                         <Badge
-                          bg={
-                            TIER_COLORS[String(c.risk_tier || "").toUpperCase()] || "#334155"
-                          }
+                          bg={TIER_COLORS[String(c.risk_tier || "").toUpperCase()] || "#334155"}
                         >
                           {prettyStatus(c.risk_tier)}
                         </Badge>
@@ -1096,8 +1182,8 @@ export default function App() {
 
       {!loading && tab === "customer-detail" && (
         <Section
-          title="Customer Detail Page"
-          subtitle="Latest customer on top by default."
+          title="Customer Detail"
+          subtitle="Internal customer profile with contracts and monitoring history."
           right={
             <button style={smallBtn} onClick={() => setTab("contracts")}>
               Go To Contracts Screen
@@ -1105,7 +1191,7 @@ export default function App() {
           }
         >
           {!selectedCustomer?.customer ? (
-            <EmptyState title="No customer selected" subtitle="Open from Customers tab." />
+            <EmptyState title="No customer selected" subtitle="Open one from Customers tab." />
           ) : (
             <>
               <div style={{ ...panelStyle, marginBottom: 16 }}>
@@ -1114,9 +1200,8 @@ export default function App() {
                 <div style={{ marginTop: 10 }}>
                   <Badge
                     bg={
-                      TIER_COLORS[
-                        String(selectedCustomer.customer.risk_tier || "").toUpperCase()
-                      ] || "#334155"
+                      TIER_COLORS[String(selectedCustomer.customer.risk_tier || "").toUpperCase()] ||
+                      "#334155"
                     }
                   >
                     {prettyStatus(selectedCustomer.customer.risk_tier)}
@@ -1124,12 +1209,9 @@ export default function App() {
                 </div>
               </div>
 
-              <Section title="Customer Contracts" subtitle="Generated contract list for this customer.">
+              <Section title="Customer Contracts" subtitle="Generated contracts for this customer.">
                 {!selectedCustomer.contracts?.length ? (
-                  <EmptyState
-                    title="No contracts"
-                    subtitle="No contracts available for this customer."
-                  />
+                  <EmptyState title="No contracts" subtitle="No contracts available for this customer." />
                 ) : (
                   <div style={{ overflowX: "auto" }}>
                     <table style={tableStyle}>
@@ -1163,7 +1245,10 @@ export default function App() {
                 )}
               </Section>
 
-              <Section title="Customer Monitoring" subtitle="Monitoring records for this customer.">
+              <Section
+                title="Customer Monitoring"
+                subtitle="Monitoring schedule and status for this customer."
+              >
                 {!selectedCustomer.monitoring?.length ? (
                   <EmptyState
                     title="No monitoring"
@@ -1201,8 +1286,8 @@ export default function App() {
 
       {!loading && tab === "contracts" && (
         <Section
-          title="Contracts Screen"
-          subtitle="Generated contracts list."
+          title="Contracts"
+          subtitle="Policy contracts created for approved flows. Regenerate sends users back to this screen for review/edit."
           right={
             latestContract ? (
               <Badge bg="#dbeafe" color="#1e3a8a">
@@ -1243,7 +1328,7 @@ export default function App() {
                       </td>
                       <td style={thtd}>
                         <button style={smallBtn} onClick={() => onRegenerateContract(c.id)}>
-                          Regenerate
+                          Regenerate / Edit
                         </button>
                       </td>
                     </tr>
@@ -1258,7 +1343,7 @@ export default function App() {
       {!loading && tab === "applications" && (
         <Section
           title="Applications"
-          subtitle="Manage application status, start KYC, and override risk tier manually."
+          subtitle="Track applications, launch KYC, review actual verification outcomes, and override risk only when needed."
         >
           {!applications.length ? (
             <EmptyState title="No applications found" subtitle="Create from Workflow tab." />
@@ -1314,9 +1399,16 @@ export default function App() {
                         </select>
                       </td>
                       <td style={thtd}>
-                        <button style={secondaryBtn} onClick={() => onStartKyc(a)} disabled={busy}>
-                          Start Sumsub
-                        </button>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button style={secondaryBtn} onClick={() => onStartKyc(a)} disabled={busy}>
+                            Start Sumsub
+                          </button>
+                          {["HIGH", "CRITICAL"].includes(String(a.risk_tier || "").toUpperCase()) ? (
+                            <button style={smallBtn} onClick={() => onSendToCompliance(a.id)} disabled={busy}>
+                              Send to Compliance
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1328,7 +1420,7 @@ export default function App() {
       )}
 
       {!loading && tab === "dashboard" && (
-        <Section title="Dashboard" subtitle="Summary.">
+        <Section title="Dashboard" subtitle="Internal operations summary across KYC, risk, compliance, contracts, and monitoring.">
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <MetricCard label="Applications" value={summary.counts.applications || 0} />
             <MetricCard label="Customers" value={summary.counts.customers || 0} />
@@ -1341,7 +1433,7 @@ export default function App() {
       )}
 
       {!loading && tab === "audits" && (
-        <Section title="Audit Logs" subtitle="Traceability.">
+        <Section title="Audit Logs" subtitle="Traceability for application, KYC, compliance, monitoring, and contract events.">
           {(summary.audits || []).length === 0 ? (
             <EmptyState title="No audit logs yet" subtitle="Workflow actions will appear here." />
           ) : (

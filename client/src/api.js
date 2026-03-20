@@ -33,7 +33,10 @@ export async function startKyc(id) {
 export async function sendSumsubWebhook(payload) {
   return jsonFetch("/api/webhook/sumsub", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-simulated-webhook": "true",
+    },
     body: JSON.stringify(payload),
   });
 }

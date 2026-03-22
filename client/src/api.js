@@ -86,32 +86,12 @@ export async function listVerifiedResults(successfulOnly = false) {
   return jsonFetch(`/api/verified-results${qs}`);
 }
 
-export async function overrideRiskTier(applicationId, riskTier) {
-  return jsonFetch(`/api/applications/${applicationId}/risk-tier`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ riskTier }),
-  });
-}
-
 export async function listMonitoring() {
   return jsonFetch("/api/monitoring");
-}
-
-export async function actOnMonitoring(id, action) {
-  return jsonFetch(`/api/monitoring/${id}/action`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action }),
-  });
 }
 
 export async function sendToComplianceReview(applicationId) {
   return jsonFetch(`/api/applications/${applicationId}/send-to-compliance`, {
     method: "POST",
   });
-}
-
-export function contractPdfUrl(id) {
-  return `/api/contracts/${id}/pdf`;
 }

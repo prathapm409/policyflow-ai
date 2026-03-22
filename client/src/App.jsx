@@ -7,7 +7,6 @@ import {
   createApplication,
   startKyc,
   sendSumsubWebhook,
-  overrideRiskTier,
   getCustomer,
 } from "./api";
 import VerifiedKycList from "./pages/VerifiedKycList";
@@ -31,6 +30,8 @@ const STATUS_COLORS = {
   IN_REVIEW: "#7c3aed",
   NOT_STARTED: "#475569",
   ESCALATED: "#dc2626",
+  FAILED: "#dc2626",
+  SUCCESSFUL: "#16a34a",
 };
 
 const TIER_COLORS = {
@@ -189,29 +190,31 @@ function ProcessFlowCard({ result }) {
   const stepsMap = {
     LOW: [
       "Successful KYC verified",
-      "Auto risk score calculated",
+      "Risk score and tier auto-calculated",
       "Customer created",
-      "Contract generated",
-      "Monitoring created",
+      "Contract page opened",
+      "Monitoring record created",
     ],
     MEDIUM: [
       "Successful KYC verified",
-      "Auto risk score calculated",
+      "Risk score and tier auto-calculated",
       "Customer created",
-      "Monitoring created",
-      "Compliance review opened",
+      "Contract page opened",
+      "Monitoring / review flow created",
     ],
     HIGH: [
-      "Verification result received",
-      "High risk assigned",
-      "Compliance review queue triggered",
-      "Policy held",
+      "Successful KYC verified",
+      "Risk score and tier auto-calculated",
+      "High risk identified",
+      "Send to Compliance Review action available",
+      "Compliance review queue entry created",
     ],
     CRITICAL: [
-      "Verification result received",
-      "Critical risk assigned",
-      "Escalated to compliance",
-      "Policy blocked",
+      "Successful KYC verified",
+      "Risk score and tier auto-calculated",
+      "Critical risk identified",
+      "Send to Compliance Review action available",
+      "Compliance review queue entry created",
     ],
   };
 
@@ -220,7 +223,7 @@ function ProcessFlowCard({ result }) {
   return (
     <Section
       title="Automated Process Result"
-      subtitle={`POC path for ${result.riskTier} risk tier.`}
+      subtitle={`System-driven path for ${result.riskTier} risk tier.`}
       right={<Badge bg={TIER_COLORS[result.riskTier] || "#334155"}>{result.riskTier}</Badge>}
     >
       <div style={{ display: "grid", gap: 12 }}>
@@ -281,7 +284,7 @@ function KycModal({ open, onClose, title }) {
           <div>
             <div style={{ fontSize: 22, fontWeight: 900 }}>{title}</div>
             <div style={{ opacity: 0.75, marginTop: 4 }}>
-              Complete Sumsub verification in this window.
+              Complete document verification and liveness in this window.
             </div>
           </div>
           <button style={closeBtn} onClick={onClose}>
@@ -292,6 +295,61 @@ function KycModal({ open, onClose, title }) {
           id="sumsub-websdk-container"
           style={{ minHeight: "78vh", borderRadius: 12, overflow: "hidden", background: "#fff" }}
         />
+      </div>
+    </div>
+  );
+}
+
+function VerificationReadOnlyPanel({ selectedApplication }) {
+  if (!selectedApplication) {
+    return (
+      <EmptyState
+        title="No application selected"
+        subtitle="Select an application in Workflow to see Sumsub verification output."
+      />
+    );
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Badge bg={STATUS_COLORS[selectedApplication.kyc_status] || "#475569"}>
+          KYC: {prettyStatus(selectedApplication.kyc_status)}
+        </Badge>
+        <Badge bg={TIER_COLORS[selectedApplication.risk_tier] || "#334155"}>
+          Risk Tier: {prettyStatus(selectedApplication.risk_tier)}
+        </Badge>
+        <Badge bg="#334155">Risk Score: {selectedApplication.risk_score ?? 0}</Badge>
+      </div>
+
+      <div style={{ background: "#0f1b39", borderRadius: 14, padding: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Sumsub Verification Result</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={readonlyItem}>
+            <strong>Document verification</strong>
+            <span>{selectedApplication.kyc_status === "APPROVED" ? "✅ Successful" : "—"}</span>
+          </div>
+          <div style={readonlyItem}>
+            <strong>Verification outcome</strong>
+            <span>{prettyStatus(selectedApplication.kyc_status)}</span>
+          </div>
+          <div style={readonlyItem}>
+            <strong>Decision status</strong>
+            <span>{prettyStatus(selectedApplication.decision_status)}</span>
+          </div>
+          <div style={readonlyItem}>
+            <strong>Compliance status</strong>
+            <span>{prettyStatus(selectedApplication.compliance_status)}</span>
+          </div>
+          <div style={readonlyItem}>
+            <strong>Policy status</strong>
+            <span>{prettyStatus(selectedApplication.policy_status)}</span>
+          </div>
+          <div style={readonlyItem}>
+            <strong>Monitoring</strong>
+            <span>{selectedApplication.monitoring_frequency || "-"}</span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -470,29 +528,10 @@ export default function App() {
 
       setInfo("Verification result processed.");
       await loadAll();
+      setTab("verified");
     } catch (e) {
       console.error(e);
       setError("Verification simulation failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onOverrideTier(applicationId, riskTier) {
-    setBusy(true);
-    setError("");
-    setInfo("");
-    try {
-      const res = await overrideRiskTier(applicationId, riskTier);
-      if (!res?.ok) {
-        setError(res?.error || "Failed to override risk tier");
-        return;
-      }
-      setInfo(`Risk tier updated to ${riskTier}.`);
-      await loadAll();
-    } catch (e) {
-      console.error(e);
-      setError("Risk tier override failed");
     } finally {
       setBusy(false);
     }
@@ -579,7 +618,7 @@ export default function App() {
         <>
           <Section
             title="KYC Workflow"
-            subtitle="KYC result comes from Sumsub, successful cases are filtered and viewed, risk is automatically scored with reasons, and cases are routed to contract generation or compliance review."
+            subtitle="Internal workflow: create application, complete KYC in Sumsub, receive verification result, auto-calculate risk, and route to contract or compliance."
           >
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
               <div>
@@ -602,7 +641,7 @@ export default function App() {
               </div>
 
               <div>
-                <h3>Verification and risk flow</h3>
+                <h3>Verification and automated risk flow</h3>
                 <select
                   value={selectedId || ""}
                   onChange={(e) => setSelectedId(Number(e.target.value))}
@@ -642,8 +681,8 @@ export default function App() {
                 </select>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                  <Badge bg="#0f172a">Risk score: {riskPreview.score}</Badge>
-                  <Badge bg={TIER_COLORS[riskPreview.tier]}>{riskPreview.tier}</Badge>
+                  <Badge bg="#0f172a">Final Risk Score: {riskPreview.score}</Badge>
+                  <Badge bg={TIER_COLORS[riskPreview.tier]}>Final Risk Tier: {riskPreview.tier}</Badge>
                 </div>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
@@ -674,6 +713,13 @@ export default function App() {
             </div>
           </Section>
 
+          <Section
+            title="Verification Result + Risk Evaluation"
+            subtitle="Read-only Sumsub verification output and backend-driven risk scoring."
+          >
+            <VerificationReadOnlyPanel selectedApplication={selectedApplication} />
+          </Section>
+
           <ProcessFlowCard result={processResult} />
         </>
       )}
@@ -694,7 +740,8 @@ export default function App() {
       {!loading && tab === "applications" && (
         <Section
           title="Applications"
-          subtitle="Application list with verification status, risk, and routing status."
+          subtitle="Show actual Sumsub verification outcome and application status."
+          right={<Badge bg="#334155">Filter eligible next-step cases in Verified Results</Badge>}
         >
           {!applications.length ? (
             <EmptyState title="No applications found" subtitle="Create one from Workflow." />
@@ -702,21 +749,22 @@ export default function App() {
             <table>
               <thead>
                 <tr>
+                  <th>Application ID</th>
                   <th>Name</th>
                   <th>Email</th>
-                  <th>KYC</th>
+                  <th>KYC Status</th>
+                  <th>Verification Outcome</th>
                   <th>Risk Score</th>
                   <th>Risk Tier</th>
                   <th>Decision</th>
                   <th>Compliance</th>
                   <th>Policy</th>
-                  <th>Monitoring</th>
-                  <th>Override</th>
                 </tr>
               </thead>
               <tbody>
                 {applications.map((a) => (
                   <tr key={a.id}>
+                    <td>{a.id}</td>
                     <td>{a.full_name}</td>
                     <td>{a.email}</td>
                     <td>
@@ -724,6 +772,7 @@ export default function App() {
                         {prettyStatus(a.kyc_status)}
                       </Badge>
                     </td>
+                    <td>{prettyStatus(a.kyc_status)}</td>
                     <td>{a.risk_score ?? 0}</td>
                     <td>
                       <Badge bg={TIER_COLORS[a.risk_tier] || "#334155"}>
@@ -733,19 +782,6 @@ export default function App() {
                     <td>{prettyStatus(a.decision_status)}</td>
                     <td>{prettyStatus(a.compliance_status)}</td>
                     <td>{prettyStatus(a.policy_status)}</td>
-                    <td>{a.monitoring_frequency || "-"}</td>
-                    <td>
-                      <select
-                        defaultValue=""
-                        onChange={(e) => e.target.value && onOverrideTier(a.id, e.target.value)}
-                      >
-                        <option value="">Select</option>
-                        <option value="LOW">LOW</option>
-                        <option value="MEDIUM">MEDIUM</option>
-                        <option value="HIGH">HIGH</option>
-                        <option value="CRITICAL">CRITICAL</option>
-                      </select>
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -757,14 +793,14 @@ export default function App() {
       {!loading && tab === "verified" && (
         <Section
           title="Verified Results"
-          subtitle="Verified results screen showing actual Sumsub outcome, successful KYC filter, risk score, and send-to-compliance action."
+          subtitle="Show only successful KYC applications to risk analysts, display actual Sumsub outcome, and expose Send to Compliance Review for high/critical risk."
         >
           <VerifiedKycList />
         </Section>
       )}
 
       {!loading && tab === "reviews" && (
-        <Section title="Compliance Review Queue" subtitle="High and critical risk review handling.">
+        <Section title="Compliance Review Queue" subtitle="High-risk and critical-risk cases routed for compliance review.">
           <ComplianceQueue />
         </Section>
       )}
@@ -772,7 +808,7 @@ export default function App() {
       {!loading && tab === "contracts" && (
         <Section
           title="Contracts"
-          subtitle="Generated contracts with regenerate/edit flow visible in the UI."
+          subtitle="Low/Medium risk cases continue to contract creation. Regenerate must keep editing flow visible."
         >
           <ContractList />
         </Section>
@@ -781,7 +817,7 @@ export default function App() {
       {!loading && tab === "monitoring" && (
         <Section title="Monitoring" subtitle="Monitoring records visible in the UI.">
           {!monitoring.length ? (
-            <EmptyState title="No monitoring records" subtitle="They will appear after processing." />
+            <EmptyState title="No monitoring records" subtitle="They will appear after low/medium-risk processing." />
           ) : (
             <table>
               <thead>
@@ -812,9 +848,9 @@ export default function App() {
       )}
 
       {!loading && tab === "customers" && (
-        <Section title="Customers" subtitle="Customer records visible in the UI.">
+        <Section title="Customers" subtitle="Customer records created for eligible successful KYC flows.">
           {!customers.length ? (
-            <EmptyState title="No customers" subtitle="Customers will appear after approved flows." />
+            <EmptyState title="No customers" subtitle="Customers will appear after approved low/medium-risk flows." />
           ) : (
             <>
               <table>
@@ -843,8 +879,8 @@ export default function App() {
               </table>
 
               {selectedCustomer?.customer ? (
-                <div style={{ marginTop: 20 }}>
-                  <h3>{selectedCustomer.customer.full_name}</h3>
+                <div style={{ marginTop: 20, background: "#0f1b39", padding: 16, borderRadius: 14 }}>
+                  <h3 style={{ marginTop: 0 }}>{selectedCustomer.customer.full_name}</h3>
                   <p>{selectedCustomer.customer.email}</p>
                   <p>Risk Tier: {selectedCustomer.customer.risk_tier}</p>
                 </div>
@@ -855,7 +891,7 @@ export default function App() {
       )}
 
       {!loading && tab === "audits" && (
-        <Section title="Audit Logs" subtitle="Traceability of workflow actions.">
+        <Section title="Audit Logs" subtitle="Traceability of workflow and backend decisions.">
           {!summary.audits?.length ? (
             <EmptyState title="No audit logs" subtitle="Workflow events will appear here." />
           ) : (
@@ -883,6 +919,16 @@ export default function App() {
     </div>
   );
 }
+
+const readonlyItem = {
+  background: "rgba(255,255,255,0.04)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: 12,
+  padding: 12,
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+};
 
 const modalBackdrop = {
   position: "fixed",

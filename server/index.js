@@ -130,34 +130,6 @@ function buildSignalPayload(payload = {}) {
   };
 }
 
-function deriveStrictVerification(payload = {}, baseStatus) {
-  const labels = getRejectLabels(payload);
-  const rejectType = String(payload?.reviewResult?.reviewRejectType || "").toUpperCase();
-
-  const hardRejectKeywords = [
-    "FORGERY",
-    "FRAUD",
-    "TAMPER",
-    "PRINTED",
-    "COPY",
-    "SCREEN",
-    "SELFIE_MISMATCH",
-    "FACE_MISMATCH",
-    "THIRD_PARTY",
-    "DOCUMENT_DAMAGED",
-    "BAD_QUALITY",
-  ];
-
-  const hasHardReject = labels.some((l) =>
-    hardRejectKeywords.some((k) => l.includes(k))
-  );
-
-  if (hasHardReject || rejectType === "FINAL") return "REJECTED";
-  if (String(baseStatus).toUpperCase() === "APPROVED" && labels.length > 0) return "REVIEW";
-
-  return baseStatus;
-}
-
 function buildReasonLines(signals) {
   const reasons = [];
   if (signals.pepMatch) reasons.push("PEP");
@@ -169,6 +141,7 @@ function buildReasonLines(signals) {
   if (signals.deviceRisk) reasons.push("Device risk");
   if (signals.ipMismatch) reasons.push("IP mismatch");
   if (signals.manualReviewRequired) reasons.push("Manual review");
+  if (reasons.length === 0) reasons.push("No material risk signals detected");
   return reasons;
 }
 
@@ -187,15 +160,15 @@ function calculateSignalScore(signals) {
 }
 
 async function ensureCustomer(application, applicantId, riskTier, score) {
-  const existingCustomer = await safeQuery(
+  const existing = await safeQuery(
     `SELECT * FROM customers WHERE external_id = $1 ORDER BY id DESC LIMIT 1`,
     [applicantId]
   );
 
-  if (existingCustomer.rows.length) {
+  if (existing.rows.length) {
     const updated = await safeQuery(
       `UPDATE customers SET risk_tier = $2, risk_score = $3 WHERE id = $1 RETURNING *`,
-      [existingCustomer.rows[0].id, riskTier, score]
+      [existing.rows[0].id, riskTier, score]
     );
     await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [
       application.id,
@@ -204,44 +177,36 @@ async function ensureCustomer(application, applicantId, riskTier, score) {
     return updated.rows[0];
   }
 
-  const customerRes = await safeQuery(
-    `
-    INSERT INTO customers (external_id, full_name, email, risk_tier, risk_score)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING *
-    `,
+  const inserted = await safeQuery(
+    `INSERT INTO customers (external_id, full_name, email, risk_tier, risk_score)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
     [applicantId, application.full_name, application.email, riskTier, score]
   );
 
   await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [
     application.id,
-    customerRes.rows[0].id,
+    inserted.rows[0].id,
   ]);
 
-  return customerRes.rows[0];
+  return inserted.rows[0];
 }
 
-async function ensureContract(
-  application,
-  customer,
-  applicantId,
-  verificationStatus,
-  monitoringFrequency
-) {
-  const existingContract = await safeQuery(
+async function ensureContract(application, customer, applicantId, verificationStatus, monitoringFrequency) {
+  const existing = await safeQuery(
     `SELECT * FROM contracts WHERE customer_id = $1 ORDER BY id DESC LIMIT 1`,
     [customer.id]
   );
 
-  if (existingContract.rows.length) {
+  if (existing.rows.length) {
     await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [
       application.id,
-      existingContract.rows[0].id,
+      existing.rows[0].id,
     ]);
-    return existingContract.rows[0];
+    return existing.rows[0];
   }
 
-  const contractRes = await safeQuery(
+  const inserted = await safeQuery(
     `
     INSERT INTO contracts (
       customer_id,
@@ -292,10 +257,10 @@ async function ensureContract(
 
   await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [
     application.id,
-    contractRes.rows[0].id,
+    inserted.rows[0].id,
   ]);
 
-  return contractRes.rows[0];
+  return inserted.rows[0];
 }
 
 async function upsertMonitoring(customerId, frequency) {
@@ -307,7 +272,6 @@ async function upsertMonitoring(customerId, frequency) {
   const intervalMap = {
     "12_MONTHS": "365 days",
     "6_MONTHS": "180 days",
-    "3_MONTHS": "90 days",
   };
   const interval = intervalMap[frequency] || "365 days";
 
@@ -328,7 +292,6 @@ async function upsertMonitoring(customerId, frequency) {
      RETURNING *`,
     [customerId, frequency, interval]
   );
-
   return inserted.rows[0];
 }
 
@@ -363,18 +326,6 @@ async function createComplianceReview(applicationId, applicantId, score, riskTie
 
   return inserted.rows[0];
 }
-
-app.get("/api/debug/env", async (req, res) => {
-  res.json({
-    ok: true,
-    nodeEnv: process.env.NODE_ENV || "development",
-    hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
-    hasSumsubAppToken: Boolean(process.env.SUMSUB_APP_TOKEN),
-    hasSumsubSecretKey: Boolean(process.env.SUMSUB_SECRET_KEY),
-    hasSumsubWebhookSecret: Boolean(process.env.SUMSUB_WEBHOOK_SECRET),
-    sumsubLevelName: getSumsubLevelName(),
-  });
-});
 
 app.get("/api/summary", async (req, res) => {
   try {
@@ -418,12 +369,10 @@ app.get("/api/applications", async (req, res) => {
         customer_id,
         contract_id,
         created_at,
-        updated_at,
-        risk_override_tier
+        updated_at
       FROM applications
       ORDER BY id DESC
     `);
-
     res.json({ ok: true, applications: result.rows || [] });
   } catch (e) {
     res.status(500).json(mapDbError(e));
@@ -467,90 +416,6 @@ app.post("/api/applications", async (req, res) => {
   }
 });
 
-app.post("/api/applications/:id/risk-tier", async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const overrideTier = normalizeTier(req.body?.riskTier);
-
-    if (!overrideTier) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "riskTier must be one of LOW, MEDIUM, HIGH, CRITICAL" });
-    }
-
-    const updated = await safeQuery(
-      `
-      UPDATE applications
-      SET risk_override_tier = $2, risk_tier = $2, updated_at = NOW()
-      WHERE id = $1
-      RETURNING *
-      `,
-      [id, overrideTier]
-    );
-
-    if (!updated.rows.length) {
-      return res.status(404).json({ ok: false, error: "Application not found" });
-    }
-
-    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
-      "RISK_TIER_OVERRIDDEN",
-      { applicationId: id, riskTier: overrideTier },
-    ]);
-
-    res.json({ ok: true, application: updated.rows[0] });
-  } catch (e) {
-    res.status(500).json(mapDbError(e));
-  }
-});
-
-app.post("/api/applications/:id/send-to-compliance", async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const appRes = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [id]);
-
-    if (!appRes.rows.length) {
-      return res.status(404).json({ ok: false, error: "Application not found" });
-    }
-
-    const application = appRes.rows[0];
-    const applicantId = application.external_applicant_id || `manual-${application.id}`;
-    const riskTier = normalizeTier(application.risk_tier) || "HIGH";
-    const score = Number(application.risk_score || 0);
-
-    const review = await createComplianceReview(
-      application.id,
-      applicantId,
-      score,
-      riskTier,
-      "Manually sent to compliance review"
-    );
-
-    const updated = await safeQuery(
-      `
-      UPDATE applications
-      SET compliance_status = 'IN_REVIEW',
-          policy_status = CASE
-            WHEN COALESCE(policy_status, '') IN ('', 'NOT_STARTED') THEN 'ON_HOLD'
-            ELSE policy_status
-          END,
-          updated_at = NOW()
-      WHERE id = $1
-      RETURNING *
-      `,
-      [id]
-    );
-
-    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
-      "APPLICATION_SENT_TO_COMPLIANCE",
-      { applicationId: id, reviewId: review.id },
-    ]);
-
-    res.json({ ok: true, application: updated.rows[0], review });
-  } catch (e) {
-    res.status(500).json(mapDbError(e));
-  }
-});
-
 app.post("/api/applications/:id/start-kyc", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -581,22 +446,14 @@ app.post("/api/applications/:id/start-kyc", async (req, res) => {
         return res.status(500).json({ ok: false, error: "Failed to create Sumsub applicant" });
       }
 
-      const updatedApplicant = await safeQuery(
-        `
-        UPDATE applications
-        SET external_applicant_id = $2, kyc_status = 'IN_PROGRESS', updated_at = NOW()
-        WHERE id = $1
-        RETURNING *
-        `,
+      const updated = await safeQuery(
+        `UPDATE applications
+         SET external_applicant_id = $2, kyc_status = 'IN_PROGRESS', updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
         [id, applicantId]
       );
-      application = updatedApplicant.rows[0];
-    } else {
-      const updatedApplicant = await safeQuery(
-        `UPDATE applications SET kyc_status = 'IN_PROGRESS', updated_at = NOW() WHERE id = $1 RETURNING *`,
-        [id]
-      );
-      application = updatedApplicant.rows[0];
+      application = updated.rows[0];
     }
 
     const tokenData = await sumsubRequest({
@@ -663,11 +520,9 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       [String(eventId), applicantId, String(payload.type || payload.status || "unknown")]
     );
 
-    let verificationStatus = extractVerificationStatus(payload);
-    verificationStatus = deriveStrictVerification(payload, verificationStatus);
-
+    const verificationStatus = normalizeVerificationStatus(extractVerificationStatus(payload));
     const signals = buildSignalPayload(payload);
-    const traceReasons = buildReasonLines(signals);
+    const reasons = buildReasonLines(signals);
     const score = calculateSignalScore(signals);
 
     const appRes = await safeQuery(
@@ -680,7 +535,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
     }
 
     const application = appRes.rows[0];
-    const riskTier = normalizeTier(application.risk_override_tier) || assignRiskTierFromScore(score);
+    const riskTier = assignRiskTierFromScore(score);
 
     let decisionStatus = determineKycDecision({ verificationStatus, riskTier });
     let complianceStatus = "NOT_REQUIRED";
@@ -695,7 +550,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       if (riskTier === "LOW") {
         decisionStatus = "AUTO_APPROVED";
         complianceStatus = "NOT_REQUIRED";
-        policyStatus = "GENERATED";
+        policyStatus = "CONTRACT_GENERATED";
         monitoringFrequency = "12_MONTHS";
 
         customer = await ensureCustomer(application, applicantId, riskTier, score);
@@ -708,69 +563,40 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         );
         monitoringRecord = await upsertMonitoring(customer.id, monitoringFrequency);
       } else if (riskTier === "MEDIUM") {
-        decisionStatus = "STANDARD_MONITORING";
-        complianceStatus = "IN_REVIEW";
-        policyStatus = "MONITORING_ONLY";
+        decisionStatus = "PROCEED_TO_CONTRACT";
+        complianceStatus = "NOT_REQUIRED";
+        policyStatus = "CONTRACT_GENERATED";
         monitoringFrequency = "6_MONTHS";
 
         customer = await ensureCustomer(application, applicantId, riskTier, score);
-        monitoringRecord = await upsertMonitoring(customer.id, monitoringFrequency);
-        complianceReview = await createComplianceReview(
-          application.id,
+        contract = await ensureContract(
+          application,
+          customer,
           applicantId,
-          score,
-          riskTier,
-          traceReasons.join(", ") || "Medium risk standard monitoring"
+          verificationStatus,
+          monitoringFrequency
         );
-      } else if (riskTier === "HIGH") {
-        decisionStatus = "MANUAL_REVIEW";
-        complianceStatus = "IN_REVIEW";
+        monitoringRecord = await upsertMonitoring(customer.id, monitoringFrequency);
+      } else {
+        decisionStatus = "SEND_TO_COMPLIANCE";
+        complianceStatus = "SENT_TO_COMPLIANCE";
         policyStatus = "ON_HOLD";
         complianceReview = await createComplianceReview(
           application.id,
           applicantId,
           score,
           riskTier,
-          traceReasons.join(", ") || "High risk manual review"
-        );
-      } else {
-        decisionStatus = "REJECT_ESCALATE";
-        complianceStatus = "ESCALATED";
-        policyStatus = "REJECTED";
-        complianceReview = await createComplianceReview(
-          application.id,
-          applicantId,
-          score,
-          "CRITICAL",
-          traceReasons.join(", ") || "Critical risk reject / escalate"
+          reasons.join(", ")
         );
       }
     } else if (verificationStatus === "REJECTED") {
-      decisionStatus = "REJECT_ESCALATE";
-      complianceStatus = "REJECTED";
-      policyStatus = "REJECTED";
-      complianceReview = await createComplianceReview(
-        application.id,
-        applicantId,
-        score,
-        riskTier,
-        traceReasons.join(", ") || "KYC rejected"
-      );
+      decisionStatus = "KYC_FAILED";
+      complianceStatus = "NOT_REQUIRED";
+      policyStatus = "NOT_STARTED";
     } else if (verificationStatus === "REVIEW") {
-      decisionStatus = "MANUAL_REVIEW";
-      complianceStatus = "IN_REVIEW";
-      policyStatus = "ON_HOLD";
-      complianceReview = await createComplianceReview(
-        application.id,
-        applicantId,
-        score,
-        riskTier,
-        traceReasons.join(", ") || "Sent to review"
-      );
-    } else {
-      decisionStatus = "PENDING";
-      complianceStatus = "PENDING";
-      policyStatus = "PENDING";
+      decisionStatus = "UNDER_REVIEW";
+      complianceStatus = "NOT_REQUIRED";
+      policyStatus = "NOT_STARTED";
     }
 
     const updatedApp = await safeQuery(
@@ -800,20 +626,6 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       ]
     );
 
-    if (customer) {
-      await safeQuery(`UPDATE applications SET customer_id = $2 WHERE id = $1`, [
-        application.id,
-        customer.id,
-      ]);
-    }
-
-    if (contract) {
-      await safeQuery(`UPDATE applications SET contract_id = $2 WHERE id = $1`, [
-        application.id,
-        contract.id,
-      ]);
-    }
-
     await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
       "SUMSUB_WEBHOOK_PROCESSED",
       {
@@ -822,7 +634,7 @@ app.post("/api/webhook/sumsub", async (req, res) => {
         verificationStatus,
         score,
         riskTier,
-        traceReasons,
+        reasons,
         decisionStatus,
       },
     ]);
@@ -837,10 +649,125 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       score,
       riskTier,
       verificationStatus,
-      reasons: traceReasons,
+      reasons,
     });
   } catch (e) {
     console.error("Sumsub webhook error:", e);
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.get("/api/verified-results", async (req, res) => {
+  try {
+    const successfulOnly = String(req.query.successfulOnly || "").toLowerCase() === "true";
+
+    const result = successfulOnly
+      ? await safeQuery(
+          `
+          SELECT *
+          FROM applications
+          WHERE kyc_status = 'APPROVED'
+          ORDER BY updated_at DESC NULLS LAST, id DESC
+          `
+        )
+      : await safeQuery(
+          `
+          SELECT *
+          FROM applications
+          WHERE kyc_status IN ('APPROVED', 'REJECTED', 'PENDING', 'REVIEW', 'PENDING_KYC', 'IN_PROGRESS')
+          ORDER BY updated_at DESC NULLS LAST, id DESC
+          `
+        );
+
+    res.json({ ok: true, results: result.rows || [] });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.post("/api/applications/:id/send-to-compliance", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const appRes = await safeQuery(`SELECT * FROM applications WHERE id = $1`, [id]);
+
+    if (!appRes.rows.length) {
+      return res.status(404).json({ ok: false, error: "Application not found" });
+    }
+
+    const application = appRes.rows[0];
+    const review = await createComplianceReview(
+      application.id,
+      application.external_applicant_id || `manual-${application.id}`,
+      Number(application.risk_score || 0),
+      application.risk_tier || "HIGH",
+      "Sent to Compliance Review"
+    );
+
+    const updated = await safeQuery(
+      `UPDATE applications
+       SET compliance_status = 'SENT_TO_COMPLIANCE',
+           policy_status = 'ON_HOLD',
+           decision_status = 'SEND_TO_COMPLIANCE',
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
+
+    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
+      "APPLICATION_SENT_TO_COMPLIANCE",
+      { applicationId: id, reviewId: review.id },
+    ]);
+
+    res.json({ ok: true, application: updated.rows[0], review });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.get("/api/compliance-reviews", async (req, res) => {
+  try {
+    const result = await safeQuery(`SELECT * FROM compliance_reviews ORDER BY created_at DESC`);
+    res.json({ ok: true, reviews: result.rows || [] });
+  } catch (e) {
+    res.status(500).json(mapDbError(e));
+  }
+});
+
+app.post("/api/compliance-reviews/:id/action", async (req, res) => {
+  try {
+    const action = String(req.body?.action || "").toUpperCase();
+    const allowed = ["APPROVE", "REJECT", "DONE", "START"];
+    if (!allowed.includes(action)) {
+      return res.status(400).json({ ok: false, error: "Invalid action" });
+    }
+
+    const reviewRes = await safeQuery(`SELECT * FROM compliance_reviews WHERE id = $1`, [
+      req.params.id,
+    ]);
+
+    if (!reviewRes.rows.length) {
+      return res.status(404).json({ ok: false, error: "Review not found" });
+    }
+
+    let reviewStatus = reviewRes.rows[0].status;
+    if (action === "START") reviewStatus = "IN_PROGRESS";
+    if (action === "DONE") reviewStatus = "DONE";
+    if (action === "APPROVE") reviewStatus = "APPROVED";
+    if (action === "REJECT") reviewStatus = "REJECTED";
+
+    const updatedReview = await safeQuery(
+      `UPDATE compliance_reviews SET status = $2 WHERE id = $1 RETURNING *`,
+      [req.params.id, reviewStatus]
+    );
+
+    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
+      "COMPLIANCE_REVIEW_ACTION",
+      { reviewId: req.params.id, action },
+    ]);
+
+    res.json({ ok: true, review: updatedReview.rows[0] });
+  } catch (e) {
     res.status(500).json(mapDbError(e));
   }
 });
@@ -925,8 +852,7 @@ app.put("/api/contracts/:id", async (req, res) => {
         monitoring_frequency = COALESCE($10, monitoring_frequency),
         status = COALESCE($11, status)
       WHERE id = $1
-      RETURNING *
-      `,
+      RETURNING *`,
       [
         req.params.id,
         premium ?? null,
@@ -979,111 +905,6 @@ app.post("/api/contracts/:id/regenerate", async (req, res) => {
   }
 });
 
-app.get("/api/compliance-reviews", async (req, res) => {
-  try {
-    const result = await safeQuery(`SELECT * FROM compliance_reviews ORDER BY created_at DESC`);
-    res.json({ ok: true, reviews: result.rows || [] });
-  } catch (e) {
-    res.status(500).json(mapDbError(e));
-  }
-});
-
-app.post("/api/compliance-reviews/:id/action", async (req, res) => {
-  try {
-    const action = String(req.body?.action || "").toUpperCase();
-    const allowed = ["APPROVE", "REJECT", "DONE", "ESCALATE", "START"];
-
-    if (!allowed.includes(action)) {
-      return res.status(400).json({ ok: false, error: "Invalid action" });
-    }
-
-    const reviewRes = await safeQuery(`SELECT * FROM compliance_reviews WHERE id = $1`, [
-      req.params.id,
-    ]);
-
-    if (!reviewRes.rows.length) {
-      return res.status(404).json({ ok: false, error: "Review not found" });
-    }
-
-    const review = reviewRes.rows[0];
-    let reviewStatus = review.status;
-    let appCompliance = null;
-    let appPolicy = null;
-
-    if (action === "START") reviewStatus = "IN_PROGRESS";
-    if (action === "DONE") reviewStatus = "DONE";
-    if (action === "ESCALATE") {
-      reviewStatus = "ESCALATED";
-      appCompliance = "ESCALATED";
-      appPolicy = "ON_HOLD";
-    }
-    if (action === "APPROVE") {
-      reviewStatus = "APPROVED";
-      appCompliance = "APPROVED";
-      appPolicy = "MONITORING_ONLY";
-    }
-    if (action === "REJECT") {
-      reviewStatus = "REJECTED";
-      appCompliance = "REJECTED";
-      appPolicy = "REJECTED";
-    }
-
-    const updatedReview = await safeQuery(
-      `UPDATE compliance_reviews SET status = $2 WHERE id = $1 RETURNING *`,
-      [req.params.id, reviewStatus]
-    );
-
-    if (appCompliance || appPolicy) {
-      await safeQuery(
-        `UPDATE applications
-         SET compliance_status = COALESCE($2, compliance_status),
-             policy_status = COALESCE($3, policy_status),
-             updated_at = NOW()
-         WHERE id = $1`,
-        [review.application_id, appCompliance, appPolicy]
-      );
-    }
-
-    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
-      "COMPLIANCE_REVIEW_ACTION",
-      { reviewId: req.params.id, action },
-    ]);
-
-    res.json({ ok: true, review: updatedReview.rows[0] });
-  } catch (e) {
-    res.status(500).json(mapDbError(e));
-  }
-});
-
-app.get("/api/verified-results", async (req, res) => {
-  try {
-    const successfulOnly = String(req.query.successfulOnly || "").toLowerCase() === "true";
-
-    const result = successfulOnly
-      ? await safeQuery(
-          `
-          SELECT *
-          FROM applications
-          WHERE kyc_status = 'APPROVED'
-          ORDER BY updated_at DESC NULLS LAST, id DESC
-          `
-        )
-      : await safeQuery(
-          `
-          SELECT *
-          FROM applications
-          WHERE kyc_status IN ('APPROVED', 'REJECTED', 'PENDING', 'REVIEW')
-             OR decision_status IN ('AUTO_APPROVED', 'STANDARD_MONITORING', 'MANUAL_REVIEW', 'REJECT_ESCALATE')
-          ORDER BY updated_at DESC NULLS LAST, id DESC
-          `
-        );
-
-    res.json({ ok: true, results: result.rows || [] });
-  } catch (e) {
-    res.status(500).json(mapDbError(e));
-  }
-});
-
 app.get("/api/monitoring", async (req, res) => {
   try {
     const result = await safeQuery(`
@@ -1093,37 +914,6 @@ app.get("/api/monitoring", async (req, res) => {
       ORDER BY m.created_at DESC
     `);
     res.json({ ok: true, monitoring: result.rows || [] });
-  } catch (e) {
-    res.status(500).json(mapDbError(e));
-  }
-});
-
-app.post("/api/monitoring/:id/action", async (req, res) => {
-  try {
-    const action = String(req.body?.action || "").toUpperCase();
-    const allowed = ["COMPLETE", "SNOOZE"];
-
-    if (!allowed.includes(action)) {
-      return res.status(400).json({ ok: false, error: "Invalid action" });
-    }
-
-    const sql =
-      action === "COMPLETE"
-        ? `UPDATE monitoring SET status = 'COMPLETED', next_review_at = NOW() + INTERVAL '180 days' WHERE id = $1 RETURNING *`
-        : `UPDATE monitoring SET status = 'SNOOZED', next_review_at = NOW() + INTERVAL '30 days' WHERE id = $1 RETURNING *`;
-
-    const updated = await safeQuery(sql, [req.params.id]);
-
-    if (!updated.rows.length) {
-      return res.status(404).json({ ok: false, error: "Monitoring record not found" });
-    }
-
-    await safeQuery(`INSERT INTO audit_logs (event_type, payload) VALUES ($1, $2)`, [
-      "MONITORING_ACTION",
-      { monitoringId: req.params.id, action },
-    ]);
-
-    res.json({ ok: true, monitoring: updated.rows[0] });
   } catch (e) {
     res.status(500).json(mapDbError(e));
   }
@@ -1141,7 +931,6 @@ app.get("/api/audits", async (req, res) => {
 app.get("/api/contracts/:id/pdf", async (req, res) => {
   try {
     const contractRes = await safeQuery(`SELECT * FROM contracts WHERE id = $1`, [req.params.id]);
-
     if (!contractRes.rows.length) {
       return res.status(404).json({ ok: false, error: "Contract not found" });
     }
@@ -1176,7 +965,6 @@ app.get("/api/audit/export", async (req, res) => {
   try {
     const logs = await safeQuery(`SELECT * FROM audit_logs ORDER BY created_at DESC`);
     const csv = stringify(logs.rows || [], { header: true });
-
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=audit_export.csv");
     res.send(csv);

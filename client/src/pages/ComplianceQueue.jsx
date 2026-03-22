@@ -39,7 +39,7 @@ export default function ComplianceQueue() {
   return (
     <div>
       <h2>Compliance Queue</h2>
-      <p>Compliance team reviews high-risk and critical-risk cases here.</p>
+      <p>Compliance team reviews HIGH and CRITICAL risk cases here.</p>
       <table>
         <thead>
           <tr>

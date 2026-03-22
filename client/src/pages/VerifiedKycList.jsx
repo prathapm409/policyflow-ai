@@ -37,8 +37,8 @@ export default function VerifiedKycList() {
     <div>
       <h2>Verified KYC results</h2>
       <p>
-        Show actual Sumsub verification outcome. Risk analysts should mainly work on successful KYC
-        cases.
+        Risk analysts should mainly work on successful KYC applications. Show actual Sumsub outcome,
+        risk score, tier, and correct next-step action.
       </p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
@@ -73,7 +73,10 @@ export default function VerifiedKycList() {
         </thead>
         <tbody>
           {items.map((it) => {
-            const highRisk = ["HIGH", "CRITICAL"].includes(String(it.risk_tier || "").toUpperCase());
+            const tier = String(it.risk_tier || "").toUpperCase();
+            const highRisk = ["HIGH", "CRITICAL"].includes(tier);
+            const lowMedium = ["LOW", "MEDIUM"].includes(tier);
+
             return (
               <tr key={it.id}>
                 <td>{it.id}</td>
@@ -94,8 +97,10 @@ export default function VerifiedKycList() {
                     >
                       {busyId === it.id ? "Sending..." : "Send to Compliance Review"}
                     </button>
-                  ) : (
+                  ) : lowMedium ? (
                     <span>Proceed to Contract Creation</span>
+                  ) : (
+                    "-"
                   )}
                 </td>
               </tr>

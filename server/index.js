@@ -55,12 +55,6 @@ function normalizeVerificationStatus(input) {
   return "PENDING";
 }
 
-function normalizeTier(input) {
-  const value = String(input || "").trim().toUpperCase();
-  if (["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(value)) return value;
-  return null;
-}
-
 function extractApplicantId(payload = {}) {
   return payload.applicantId || payload.externalApplicantId || payload.applicant_id || null;
 }
@@ -565,19 +559,12 @@ app.post("/api/webhook/sumsub", async (req, res) => {
       } else if (riskTier === "MEDIUM") {
         decisionStatus = "PROCEED_TO_CONTRACT";
         complianceStatus = "NOT_REQUIRED";
-        policyStatus = "CONTRACT_GENERATED";
+        policyStatus = "CUSTOMER_CREATED_MONITORING_SET";
         monitoringFrequency = "6_MONTHS";
 
         customer = await ensureCustomer(application, applicantId, riskTier, score);
-        contract = await ensureContract(
-          application,
-          customer,
-          applicantId,
-          verificationStatus,
-          monitoringFrequency
-        );
         monitoringRecord = await upsertMonitoring(customer.id, monitoringFrequency);
-      } else {
+      } else if (riskTier === "HIGH") {
         decisionStatus = "SEND_TO_COMPLIANCE";
         complianceStatus = "SENT_TO_COMPLIANCE";
         policyStatus = "ON_HOLD";
@@ -588,15 +575,30 @@ app.post("/api/webhook/sumsub", async (req, res) => {
           riskTier,
           reasons.join(", ")
         );
+      } else {
+        decisionStatus = "REJECT_ESCALATE";
+        complianceStatus = "SENT_TO_COMPLIANCE";
+        policyStatus = "REJECTED_HIGH_RISK";
+        complianceReview = await createComplianceReview(
+          application.id,
+          applicantId,
+          score,
+          riskTier,
+          reasons.join(", ")
+        );
       }
     } else if (verificationStatus === "REJECTED") {
-      decisionStatus = "KYC_FAILED";
+      decisionStatus = "KYC_REJECTED";
       complianceStatus = "NOT_REQUIRED";
-      policyStatus = "NOT_STARTED";
+      policyStatus = "KYC_REJECTED";
     } else if (verificationStatus === "REVIEW") {
       decisionStatus = "UNDER_REVIEW";
       complianceStatus = "NOT_REQUIRED";
-      policyStatus = "NOT_STARTED";
+      policyStatus = "AWAITING_KYC_REVIEW";
+    } else {
+      decisionStatus = "PENDING";
+      complianceStatus = "NOT_REQUIRED";
+      policyStatus = "AWAITING_KYC";
     }
 
     const updatedApp = await safeQuery(

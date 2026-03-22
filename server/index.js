@@ -388,22 +388,12 @@ app.get("/api/summary", async (req, res) => {
         (SELECT COUNT(*) FROM monitoring) AS monitoring
     `);
 
-    const customers = await safeQuery(`SELECT * FROM customers ORDER BY created_at DESC LIMIT 10`);
     const audits = await safeQuery(`SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 20`);
-    const contracts = await safeQuery(`
-      SELECT c.*, cu.full_name, cu.email, cu.risk_tier
-      FROM contracts c
-      LEFT JOIN customers cu ON cu.id = c.customer_id
-      ORDER BY c.created_at DESC
-      LIMIT 10
-    `);
 
     res.json({
       ok: true,
       counts: counts.rows[0] || {},
-      customers: customers.rows || [],
       audits: audits.rows || [],
-      contracts: contracts.rows || [],
     });
   } catch (e) {
     res.status(500).json(mapDbError(e));

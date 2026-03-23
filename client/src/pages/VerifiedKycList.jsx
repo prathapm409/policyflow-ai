@@ -36,10 +36,7 @@ export default function VerifiedKycList() {
   return (
     <div>
       <h2>Verified KYC results</h2>
-      <p>
-        Risk analysts should mainly work on successful KYC applications. Show actual Sumsub outcome,
-        risk score, tier, and correct next-step action.
-      </p>
+      <p>Show actual Sumsub outcome and only successful KYC cases when filter is active.</p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <button
@@ -62,8 +59,7 @@ export default function VerifiedKycList() {
             <th>Application ID</th>
             <th>Name</th>
             <th>Email</th>
-            <th>KYC Status</th>
-            <th>Verification Outcome</th>
+            <th>KYC</th>
             <th>Risk Score</th>
             <th>Risk Tier</th>
             <th>Decision</th>
@@ -73,16 +69,14 @@ export default function VerifiedKycList() {
         </thead>
         <tbody>
           {items.map((it) => {
-            const tier = String(it.risk_tier || "").toUpperCase();
-            const highRisk = ["HIGH", "CRITICAL"].includes(tier);
-            const lowMedium = ["LOW", "MEDIUM"].includes(tier);
+            const highRisk = ["HIGH", "CRITICAL"].includes(String(it.risk_tier || "").toUpperCase());
+            const lowMedium = ["LOW", "MEDIUM"].includes(String(it.risk_tier || "").toUpperCase());
 
             return (
               <tr key={it.id}>
                 <td>{it.id}</td>
                 <td>{it.full_name}</td>
                 <td>{it.email}</td>
-                <td>{it.kyc_status}</td>
                 <td>{it.kyc_status}</td>
                 <td>{it.risk_score ?? 0}</td>
                 <td>{it.risk_tier || "-"}</td>
@@ -108,7 +102,7 @@ export default function VerifiedKycList() {
           })}
           {items.length === 0 && (
             <tr>
-              <td colSpan="10">No items</td>
+              <td colSpan="9">No items</td>
             </tr>
           )}
         </tbody>

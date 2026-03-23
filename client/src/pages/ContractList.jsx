@@ -59,7 +59,6 @@ export default function ContractList() {
   return (
     <div>
       <h2>Contracts</h2>
-      <p>Low and Medium risk cases should proceed here for contract editing and regeneration.</p>
       <table>
         <thead>
           <tr>

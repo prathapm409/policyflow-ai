@@ -21,21 +21,11 @@ const STATUS_COLORS = {
   REVIEW: "#7c3aed",
   IN_PROGRESS: "#2563eb",
   PENDING_KYC: "#64748b",
-  NOT_REQUIRED: "#475569",
-  GENERATED: "#16a34a",
-  MONITORING_ONLY: "#0ea5e9",
-  ON_HOLD: "#f59e0b",
-  ACTIVE: "#16a34a",
-  COMPLETED: "#2563eb",
-  SNOOZED: "#f59e0b",
-  IN_REVIEW: "#7c3aed",
-  NOT_STARTED: "#475569",
-  ESCALATED: "#dc2626",
-  FAILED: "#dc2626",
-  SUCCESSFUL: "#16a34a",
   SENT_TO_COMPLIANCE: "#ef4444",
   CONTRACT_GENERATED: "#16a34a",
   CUSTOMER_CREATED_MONITORING_SET: "#0ea5e9",
+  ON_HOLD: "#f59e0b",
+  KYC_REJECTED: "#dc2626",
 };
 
 const TIER_COLORS = {
@@ -152,7 +142,7 @@ function KycModal({ open, onClose, title }) {
   );
 }
 
-function VerificationPanel({ selectedApplication }) {
+function VerificationPanel({ selectedApplication, onGoContracts, onGoCompliance }) {
   if (!selectedApplication) {
     return (
       <EmptyState
@@ -162,20 +152,19 @@ function VerificationPanel({ selectedApplication }) {
     );
   }
 
-  const matchedReasons = []
-    .concat(selectedApplication.risk_signals || [])
-    .concat(selectedApplication.reasons || []);
+  const tier = String(selectedApplication.risk_tier || "").toUpperCase();
 
   return (
     <div style={{ background: "#0f1b39", borderRadius: 14, padding: 16 }}>
-      <h3 style={{ marginTop: 0 }}>Sumsub Verification Result</h3>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Verification Result</h3>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div style={readonlyItem}>
           <strong>Application ID</strong>
           <span>{selectedApplication.id}</span>
         </div>
         <div style={readonlyItem}>
-          <strong>Customer</strong>
+          <strong>Name</strong>
           <span>{selectedApplication.full_name}</span>
         </div>
         <div style={readonlyItem}>
@@ -191,16 +180,16 @@ function VerificationPanel({ selectedApplication }) {
           <span>{prettyStatus(selectedApplication.kyc_status)}</span>
         </div>
         <div style={readonlyItem}>
-          <strong>Decision</strong>
-          <span>{prettyStatus(selectedApplication.decision_status)}</span>
-        </div>
-        <div style={readonlyItem}>
           <strong>Final Risk Score</strong>
           <span>{selectedApplication.risk_score ?? 0}</span>
         </div>
         <div style={readonlyItem}>
           <strong>Final Risk Tier</strong>
           <span>{prettyStatus(selectedApplication.risk_tier)}</span>
+        </div>
+        <div style={readonlyItem}>
+          <strong>Decision</strong>
+          <span>{prettyStatus(selectedApplication.decision_status)}</span>
         </div>
         <div style={readonlyItem}>
           <strong>Compliance Status</strong>
@@ -212,32 +201,18 @@ function VerificationPanel({ selectedApplication }) {
         </div>
       </div>
 
-      <div>
-        <h4 style={{ marginTop: 0 }}>Matched Risk Signals / Reasons</h4>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {matchedReasons.length ? (
-            matchedReasons.map((reason, idx) => (
-              <Badge key={`${reason}-${idx}`} bg="#334155">
-                {String(reason)}
-              </Badge>
-            ))
-          ) : (
-            <span>No material risk signals detected</span>
+      <div style={{ marginTop: 18 }}>
+        <h4 style={{ marginTop: 0 }}>Recommended Action</h4>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {["LOW", "MEDIUM"].includes(tier) && (
+            <button onClick={onGoContracts}>Proceed to Contract Creation</button>
+          )}
+          {["HIGH", "CRITICAL"].includes(tier) && (
+            <button className="danger" onClick={onGoCompliance}>
+              Send to Compliance Review
+            </button>
           )}
         </div>
-      </div>
-
-      <div style={{ marginTop: 18, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {["LOW", "MEDIUM"].includes(String(selectedApplication.risk_tier || "").toUpperCase()) && (
-          <button onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-            Proceed to Contract Creation
-          </button>
-        )}
-        {["HIGH", "CRITICAL"].includes(String(selectedApplication.risk_tier || "").toUpperCase()) && (
-          <button className="danger" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-            Send to Compliance Review
-          </button>
-        )}
       </div>
     </div>
   );
@@ -276,8 +251,8 @@ export default function App() {
         listAudits(),
       ]);
 
-      if (!summaryRes?.ok) {
-        setError(summaryRes?.error || "Failed to load summary");
+      if (!summaryRes?.ok && summaryRes?.error) {
+        setError(summaryRes.error);
       }
 
       setSummary({
@@ -323,7 +298,6 @@ export default function App() {
       setInfo("Application created successfully.");
       setForm({ fullName: "", email: "" });
       await loadAll();
-      setTab("applications");
     } catch (e) {
       console.error(e);
       setError("Create application failed");
@@ -481,139 +455,136 @@ export default function App() {
       {loading ? <div>Loading...</div> : null}
 
       {!loading && tab === "applications" && (
-        <>
-          <Section
-            title="Applications"
-            subtitle="Risk analyst should work from applications and move eligible cases to verification result."
-          >
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 20 }}>
-              <div>
-                <h3>Create application</h3>
-                <form onSubmit={onCreateApplication} style={{ display: "grid", gap: 12 }}>
-                  <input
-                    placeholder="Full name"
-                    value={form.fullName}
-                    onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))}
-                  />
-                  <input
-                    placeholder="Email"
-                    value={form.email}
-                    onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-                  />
-                  <button type="submit" disabled={busy}>
-                    Create Application
-                  </button>
-                </form>
-              </div>
-
-              <div>
-                <h3>KYC actions</h3>
-                <select
-                  value={selectedId || ""}
-                  onChange={(e) => setSelectedId(Number(e.target.value))}
-                  style={{ width: "100%", marginBottom: 12 }}
-                >
-                  <option value="">Select application</option>
-                  {applications.map((app) => (
-                    <option key={app.id} value={app.id}>
-                      {app.full_name} — {app.email}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={simStatus}
-                  onChange={(e) => setSimStatus(e.target.value)}
-                  style={{ width: "100%", marginBottom: 12 }}
-                >
-                  <option value="APPROVED">approved</option>
-                  <option value="REJECTED">rejected</option>
-                  <option value="PENDING">pending</option>
-                  <option value="REVIEW">review</option>
-                </select>
-
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    disabled={busy || !selectedApplication}
-                    onClick={() => selectedApplication && onStartKyc(selectedApplication)}
-                  >
-                    Start Sumsub
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy || !selectedApplication}
-                    onClick={onSimulateVerification}
-                  >
-                    Apply Verified Result
-                  </button>
-                </div>
-              </div>
+        <Section title="Applications" subtitle="Create application, load applications, and start KYC.">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 20 }}>
+            <div>
+              <h3>Create application</h3>
+              <form onSubmit={onCreateApplication} style={{ display: "grid", gap: 12 }}>
+                <input
+                  placeholder="Full name"
+                  value={form.fullName}
+                  onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))}
+                />
+                <input
+                  placeholder="Email"
+                  value={form.email}
+                  onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
+                />
+                <button type="submit" disabled={busy}>
+                  Create Application
+                </button>
+              </form>
             </div>
 
-            {!applications.length ? (
-              <EmptyState title="No applications found" subtitle="Create one above." />
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Application ID</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>KYC Status</th>
-                    <th>Verification Outcome</th>
-                    <th>Risk Score</th>
-                    <th>Risk Tier</th>
-                    <th>Status</th>
-                    <th>Updated At</th>
-                    <th>Open</th>
+            <div>
+              <h3>KYC actions</h3>
+              <select
+                value={selectedId || ""}
+                onChange={(e) => setSelectedId(Number(e.target.value))}
+                style={{ width: "100%", marginBottom: 12 }}
+              >
+                <option value="">Select application</option>
+                {applications.map((app) => (
+                  <option key={app.id} value={app.id}>
+                    {app.full_name} — {app.email}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={simStatus}
+                onChange={(e) => setSimStatus(e.target.value)}
+                style={{ width: "100%", marginBottom: 12 }}
+              >
+                <option value="APPROVED">approved</option>
+                <option value="REJECTED">rejected</option>
+                <option value="PENDING">pending</option>
+                <option value="REVIEW">review</option>
+              </select>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={busy || !selectedApplication}
+                  onClick={() => selectedApplication && onStartKyc(selectedApplication)}
+                >
+                  Start Sumsub
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !selectedApplication}
+                  onClick={onSimulateVerification}
+                >
+                  Apply Verified Result
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {!applications.length ? (
+            <EmptyState title="No applications found" subtitle="Create one above." />
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Application ID</th>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>KYC Status</th>
+                  <th>Risk Score</th>
+                  <th>Risk Tier</th>
+                  <th>Status</th>
+                  <th>Updated At</th>
+                  <th>Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {applications.map((a) => (
+                  <tr key={a.id}>
+                    <td>{a.id}</td>
+                    <td>{a.full_name}</td>
+                    <td>{a.email}</td>
+                    <td>
+                      <Badge bg={STATUS_COLORS[a.kyc_status] || "#475569"}>
+                        {prettyStatus(a.kyc_status)}
+                      </Badge>
+                    </td>
+                    <td>{a.risk_score ?? 0}</td>
+                    <td>
+                      <Badge bg={TIER_COLORS[a.risk_tier] || "#334155"}>
+                        {prettyStatus(a.risk_tier)}
+                      </Badge>
+                    </td>
+                    <td>{prettyStatus(a.policy_status || a.decision_status)}</td>
+                    <td>{a.updated_at ? new Date(a.updated_at).toLocaleString() : "-"}</td>
+                    <td>
+                      <button
+                        onClick={() => {
+                          setSelectedId(a.id);
+                          setTab("verification");
+                        }}
+                      >
+                        Open
+                      </button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {applications.map((a) => (
-                    <tr key={a.id}>
-                      <td>{a.id}</td>
-                      <td>{a.full_name}</td>
-                      <td>{a.email}</td>
-                      <td>
-                        <Badge bg={STATUS_COLORS[a.kyc_status] || "#475569"}>
-                          {prettyStatus(a.kyc_status)}
-                        </Badge>
-                      </td>
-                      <td>{prettyStatus(a.kyc_status)}</td>
-                      <td>{a.risk_score ?? 0}</td>
-                      <td>
-                        <Badge bg={TIER_COLORS[a.risk_tier] || "#334155"}>
-                          {prettyStatus(a.risk_tier)}
-                        </Badge>
-                      </td>
-                      <td>{prettyStatus(a.policy_status || a.decision_status)}</td>
-                      <td>{a.updated_at ? new Date(a.updated_at).toLocaleString() : "-"}</td>
-                      <td>
-                        <button
-                          onClick={() => {
-                            setSelectedId(a.id);
-                            setTab("verification");
-                          }}
-                        >
-                          Open
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </Section>
-        </>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Section>
       )}
 
       {!loading && tab === "verification" && (
         <Section
           title="Verification Result"
-          subtitle="Show actual Sumsub result, risk score, risk tier, and correct next action."
+          subtitle="Show actual Sumsub result, final risk score, final risk tier, and next action."
         >
-          <VerificationPanel selectedApplication={selectedApplication} />
+          <VerificationPanel
+            selectedApplication={selectedApplication}
+            onGoContracts={() => setTab("contracts")}
+            onGoCompliance={() => setTab("compliance")}
+          />
           <div style={{ marginTop: 20 }}>
             <VerifiedKycList />
           </div>
@@ -621,13 +592,13 @@ export default function App() {
       )}
 
       {!loading && tab === "compliance" && (
-        <Section title="Compliance Review" subtitle="HIGH and CRITICAL risk cases.">
+        <Section title="Compliance Review" subtitle="High and critical risk cases.">
           <ComplianceQueue />
         </Section>
       )}
 
       {!loading && tab === "contracts" && (
-        <Section title="Contracts" subtitle="LOW / MEDIUM risk cases proceed here.">
+        <Section title="Contracts" subtitle="Low and medium risk cases proceed here.">
           <ContractList />
         </Section>
       )}
@@ -721,7 +692,7 @@ export default function App() {
       )}
 
       {!loading && tab === "audits" && (
-        <Section title="Audit Logs" subtitle="FCA-style audit trace for actions and decisions.">
+        <Section title="Audit Logs" subtitle="Audit trace for system decisions.">
           {!audits.length ? (
             <EmptyState title="No audit logs" subtitle="Workflow events will appear here." />
           ) : (
